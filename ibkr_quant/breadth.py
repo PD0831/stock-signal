@@ -64,23 +64,53 @@ def _bootstrap(tickers: list[str], state: dict) -> dict:
         state[ticker] = {
             "ema200": _compute_ema_from_series(closes, 200),
             "ema50": _compute_ema_from_series(closes, 50),
-            "ema5": _compute_ema_from_series(closes, 5),
+            "ema20": _compute_ema_from_series(closes, 20),
             "last_close": float(closes[-1]),
             "last_date": series.index[-1].date().isoformat(),
         }
     return state
 
 
+def _needs_migration(state: dict) -> bool:
+    for key, entry in state.items():
+        if key == "_counts":
+            continue
+        if isinstance(entry, dict) and "ema5" in entry:
+            return True
+    return False
+
+
+def _migrate_state(tickers: list[str], state: dict) -> dict:
+    """Replace ema5 with ema20 by re-bootstrapping EMA20 from 60-day history."""
+    print("Migrating EMA state: ema5 → ema20 (one-time, ~10s)…")
+    df = yf.download(tickers, period="90d", interval="1d", auto_adjust=True, progress=False)["Close"]
+    for ticker in df.columns:
+        entry = state.get(ticker)
+        if not isinstance(entry, dict) or "ema5" not in entry:
+            continue
+        series = df[ticker].dropna()
+        if len(series) < 25:
+            continue
+        entry["ema20"] = _compute_ema_from_series(series.values.astype(float), 20)
+        del entry["ema5"]
+    return state
+
+
 def _update_state(tickers: list[str], state: dict) -> dict:
+    if _needs_migration(state):
+        state = _migrate_state(tickers, state)
+
     df = yf.download(tickers, period="5d", interval="1d", auto_adjust=True, progress=False)["Close"]
     k200 = 2.0 / 201
     k50 = 2.0 / 51
-    k5 = 2.0 / 6
+    k20 = 2.0 / 21
     for ticker in df.columns:
         if ticker not in state:
             continue
         series = df[ticker].dropna()
         entry = state[ticker]
+        if "ema20" not in entry:
+            continue
         last = date.fromisoformat(entry["last_date"])
         for ts, close in series.items():
             day = ts.date() if hasattr(ts, "date") else ts
@@ -89,14 +119,14 @@ def _update_state(tickers: list[str], state: dict) -> dict:
             c = float(close)
             entry["ema200"] = c * k200 + entry["ema200"] * (1 - k200)
             entry["ema50"] = c * k50 + entry["ema50"] * (1 - k50)
-            entry["ema5"] = c * k5 + entry["ema5"] * (1 - k5)
+            entry["ema20"] = c * k20 + entry["ema20"] * (1 - k20)
             entry["last_close"] = c
             entry["last_date"] = day.isoformat()
     return state
 
 
 def _count_breadth(state: dict) -> tuple[float, float, float]:
-    above200 = above50 = above5 = total = 0
+    above200 = above50 = above20 = total = 0
     for key, entry in state.items():
         if key == "_counts":
             continue
@@ -108,11 +138,11 @@ def _count_breadth(state: dict) -> tuple[float, float, float]:
             above200 += 1
         if c > entry["ema50"]:
             above50 += 1
-        if c > entry["ema5"]:
-            above5 += 1
+        if c > entry["ema20"]:
+            above20 += 1
     if total == 0:
         return 0.0, 0.0, 0.0
-    return above200 / total * 100, above50 / total * 100, above5 / total * 100
+    return above200 / total * 100, above50 / total * 100, above20 / total * 100
 
 
 class BreadthComputer:
