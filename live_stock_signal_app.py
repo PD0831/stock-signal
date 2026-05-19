@@ -37,7 +37,9 @@ BREADTH_MIN_STOCKS = 100
 
 # ── In-memory cache ───────────────────────────────────────────────────────────
 _memory_cache: dict[str, tuple[datetime, Any]] = {}
-_breadth_computing = False
+_breadth_computing  = False
+_breadth_error: str = ""
+_breadth_started_at: datetime | None = None
 
 
 def cache_get(key: str, ttl_minutes: int) -> Any | None:
@@ -351,17 +353,22 @@ def compute_breadth_data() -> dict:
 
 
 def _bg_refresh_breadth() -> None:
-    global _breadth_computing
+    global _breadth_computing, _breadth_error, _breadth_started_at
     while True:
-        _breadth_computing = True
+        _breadth_computing  = True
+        _breadth_error      = ""
+        _breadth_started_at = datetime.now(timezone.utc)
         try:
             data = compute_breadth_data()
             cache_set("breadth", data)
+            _breadth_error = ""
+            time.sleep(3600)
         except Exception as e:
+            _breadth_error = str(e)
             print(f"[breadth] error: {e}")
+            time.sleep(300)   # retry in 5 min on failure instead of 60 min
         finally:
             _breadth_computing = False
-        time.sleep(3600)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -398,9 +405,25 @@ def api_signal(universe: str) -> JSONResponse:
 def api_breadth() -> JSONResponse:
     data = cache_get("breadth", ttl_minutes=120)
     if data is None:
-        status = "computing" if _breadth_computing else "starting"
-        return JSONResponse({"status": status,
-                             "message": "Breadth data is being calculated (~2 min), please retry."},
+        elapsed = ""
+        if _breadth_started_at:
+            secs = int((datetime.now(timezone.utc) - _breadth_started_at).total_seconds())
+            elapsed = f" ({secs//60}m {secs%60}s elapsed)"
+        if _breadth_error:
+            # last attempt failed — retry is scheduled, expose the error
+            return JSONResponse({"status": "error", "error": _breadth_error,
+                                 "message": "Last attempt failed — retrying in 5 min."},
+                                status_code=202)
+        if _breadth_computing:
+            return JSONResponse({"status": "computing",
+                                 "message": f"Downloading 500+ stocks of hourly data{elapsed}. "
+                                            f"Takes 3–8 min on first load — hang tight."},
+                                status_code=202)
+        # thread hasn't started yet (startup race) — kick it off
+        t = threading.Thread(target=_bg_refresh_breadth, daemon=True)
+        t.start()
+        return JSONResponse({"status": "starting",
+                             "message": "Starting breadth computation…"},
                             status_code=202)
     return JSONResponse(data)
 
@@ -795,14 +818,20 @@ const C = {
 
 // ── Fetch with retry on 202 ───────────────────────────────────────────────────
 async function loadData() {
-  for (let attempt = 0; attempt < 40; attempt++) {
+  for (let attempt = 0; attempt < 60; attempt++) {
     try {
       const res = await fetch("/api/breadth");
       if (res.status === 202) {
         const j = await res.json();
-        document.getElementById("loadDetail").textContent =
-          (j.message || "Computing…") + "  (attempt " + (attempt+1) + ")";
-        await new Promise(r => setTimeout(r, 10000));
+        const detail = document.getElementById("loadDetail");
+        if (j.status === "error") {
+          detail.textContent = "Error: " + (j.error || j.message);
+          detail.style.color = "#f85149";
+        } else {
+          detail.textContent = (j.message || "Computing…");
+          detail.style.color = "";
+        }
+        await new Promise(r => setTimeout(r, 15000));
         continue;
       }
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -810,11 +839,11 @@ async function loadData() {
       onDataReady();
       return;
     } catch(e) {
-      document.getElementById("loadDetail").textContent = "Error: " + e.message + " — retrying…";
-      await new Promise(r => setTimeout(r, 10000));
+      document.getElementById("loadDetail").textContent = "Network error: " + e.message + " — retrying…";
+      await new Promise(r => setTimeout(r, 15000));
     }
   }
-  document.getElementById("loadDetail").textContent = "Could not load data. Please refresh.";
+  document.getElementById("loadDetail").textContent = "Timed out. Please refresh the page.";
 }
 
 function onDataReady() {
