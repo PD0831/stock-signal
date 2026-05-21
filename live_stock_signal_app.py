@@ -435,22 +435,22 @@ def breadth_page() -> str:
 
 # ── HTML: shared nav ──────────────────────────────────────────────────────────
 _NAV = r"""
-<nav style="background:#161b22;border-bottom:1px solid #30363d;padding:0 20px;display:flex;gap:0">
-  <a id="nav-signals" href="/"
-     style="display:block;padding:10px 16px;font-size:13px;font-weight:600;text-decoration:none;border-bottom:2px solid transparent;color:#8b949e">
-    选股信号
-  </a>
-  <a id="nav-breadth" href="/breadth"
-     style="display:block;padding:10px 16px;font-size:13px;font-weight:600;text-decoration:none;border-bottom:2px solid transparent;color:#8b949e">
-    市场宽度
-  </a>
+<style>
+  .nav-bar { background:#161b22; border-bottom:1px solid #30363d; padding:0 24px; display:flex; gap:0; }
+  .nav-link { display:block; padding:9px 16px; font-size:13px; font-weight:600;
+              text-decoration:none; color:#8b949e;
+              border-bottom:2px solid transparent; transition:color .15s; }
+  .nav-link:hover { color:#c9d1d9; }
+  .nav-link.active { color:#58a6ff; border-bottom-color:#58a6ff; }
+</style>
+<nav class="nav-bar">
+  <a id="nav-signals" class="nav-link" href="/">选股信号</a>
+  <a id="nav-breadth" class="nav-link" href="/breadth">市场宽度</a>
 </nav>
 <script>
   (function(){
-    var path = location.pathname;
-    var id   = path.startsWith("/breadth") ? "nav-breadth" : "nav-signals";
-    var el   = document.getElementById(id);
-    if (el) { el.style.color="#58a6ff"; el.style.borderBottomColor="#58a6ff"; }
+    var id = location.pathname.startsWith("/breadth") ? "nav-breadth" : "nav-signals";
+    document.getElementById(id).classList.add("active");
   })();
 </script>
 """
@@ -459,148 +459,193 @@ _NAV = r"""
 SIGNALS_HTML = r"""<!doctype html>
 <html lang="zh">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>VIX × Breadth 选股信号</title>
   <style>
-    :root {
-      --bg: #f4f5f7; --panel: #ffffff; --text: #1b1f24; --muted: #6b7280;
-      --line: #e2e6ed;
-      --stable: #0f766e; --stable-bg: #f0fdf4; --stable-line: #86efac; --stable-dark: #166534;
-      --offens: #b45309; --offens-bg: #fffbeb; --offens-line: #fcd34d; --offens-dark: #92400e;
-      --sym: #1d4ed8; --pos: #067647; --neg: #b42318;
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      min-height: 100vh;
     }
-    * { box-sizing: border-box; }
-    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-           background:var(--bg); color:var(--text); font-size:14px; }
-    header { background:#0d1117; border-bottom:1px solid #30363d;
-             padding:16px 24px; display:flex; justify-content:space-between;
-             align-items:center; gap:16px; }
-    .hd-left h1 { margin:0 0 3px; font-size:18px; color:#e6edf3; }
-    .hd-left p  { margin:0; font-size:13px; color:#8b949e; }
-    .hd-right   { display:flex; align-items:center; gap:10px; flex-shrink:0; }
-    #clock { font-size:12px; color:#8b949e; }
-    button { height:34px; padding:0 14px; border:none; border-radius:6px;
-             font-size:13px; font-weight:600; cursor:pointer;
-             background:var(--stable); color:white; }
-    button:disabled { opacity:.55; cursor:wait; }
-    main { max-width:1300px; margin:0 auto; padding:18px; display:grid; gap:20px; }
-    .universe { display:grid; gap:10px; }
-    .universe-label { font-size:15px; font-weight:700; padding:0 2px;
-                      display:flex; justify-content:space-between; align-items:baseline; }
-    .universe-meta { font-size:12px; color:var(--muted); font-weight:400; }
-    .cards { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-    .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
-    .card-hd { padding:11px 15px; border-bottom:1px solid var(--line);
-               display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
-    .card-hd.stable { background:var(--stable-bg); border-bottom-color:var(--stable-line); }
-    .card-hd.offens { background:var(--offens-bg); border-bottom-color:var(--offens-line); }
-    .card-title { font-weight:700; font-size:13px; }
-    .card-title.stable { color:var(--stable-dark); }
-    .card-title.offens { color:var(--offens-dark); }
-    .card-sub  { font-size:11px; color:var(--muted); }
-    .card-note { padding:7px 14px; font-size:11px; color:var(--muted);
-                 border-top:1px solid var(--line); background:#fafbfc; }
-    .msg-row { padding:14px 15px; color:var(--muted); font-size:13px; }
-    .msg-row.err { color:var(--neg); }
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th, td { padding:8px 11px; border-bottom:1px solid var(--line);
-             text-align:right; white-space:nowrap; }
-    th:first-child, td:first-child { text-align:left; }
-    th { color:var(--muted); font-size:11px; font-weight:700; background:#fbfcfe;
-         text-transform:uppercase; letter-spacing:.03em; }
-    tr:last-child td { border-bottom:none; }
-    .sym { font-weight:800; color:var(--sym); letter-spacing:-.01em; }
-    .badge { display:inline-flex; align-items:center; justify-content:center;
-             min-width:26px; height:20px; padding:0 6px;
-             border-radius:999px; font-size:11px; font-weight:800; }
-    .badge.stable { background:var(--stable-dark); color:#fff; }
-    .badge.offens { background:var(--offens-dark); color:#fff; }
-    .badge.dim    { background:#e5e7eb; color:#6b7280; }
-    .pos { color:var(--pos); font-weight:600; }
-    .neg { color:var(--neg); font-weight:600; }
-    .na  { color:var(--muted); }
-    @media (max-width:800px) {
-      .cards { grid-template-columns:1fr; }
-      header { flex-direction:column; align-items:flex-start; }
-      main   { padding:12px; }
+    header {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 14px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .hd-title { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+    .hd-sub   { font-size: 11px; color: #8b949e; margin-top: 3px; }
+    .hd-right { display: flex; align-items: center; gap: 10px; }
+    #clock { font-size: 12px; color: #8b949e; font-variant-numeric: tabular-nums; }
+    #runBtn {
+      height: 30px; padding: 0 12px;
+      background: #21262d; border: 1px solid #30363d;
+      color: #c9d1d9; border-radius: 6px;
+      font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    #runBtn:hover { background: #30363d; border-color: #484f58; }
+    #runBtn:disabled { opacity: .5; cursor: wait; }
+
+    main { max-width: 1280px; margin: 0 auto; padding: 20px 16px; display: grid; gap: 32px; }
+
+    .sec-hd {
+      display: flex; align-items: baseline;
+      justify-content: space-between;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #21262d;
+      margin-bottom: 14px;
+    }
+    .sec-title { font-size: 15px; font-weight: 700; }
+    .sec-meta  { font-size: 11px; color: #8b949e; }
+
+    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .card-hd {
+      padding: 11px 15px 11px 13px;
+      border-bottom: 1px solid #30363d;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .card-hd.stable { border-left: 3px solid #3fb950; }
+    .card-hd.offens { border-left: 3px solid #d29922; }
+    .card-title { font-size: 13px; font-weight: 700; }
+    .card-title.stable { color: #3fb950; }
+    .card-title.offens { color: #d29922; }
+    .card-perf { font-size: 11px; color: #484f58; }
+    .card-note {
+      padding: 7px 15px;
+      font-size: 11px; color: #484f58;
+      background: #0d1117;
+      border-top: 1px solid #21262d;
+    }
+
+    .msg-row { padding: 16px 15px; color: #8b949e; font-size: 13px; }
+    .msg-row.err { color: #f85149; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      padding: 9px 15px;
+      text-align: right;
+      white-space: nowrap;
+      border-bottom: 1px solid #21262d;
+    }
+    th:first-child, td:first-child { text-align: left; }
+    th {
+      font-size: 10px; font-weight: 700;
+      color: #484f58; text-transform: uppercase; letter-spacing: .05em;
+      background: #0d1117;
+    }
+    tbody tr { transition: background .1s; }
+    tbody tr:hover { background: rgba(139,148,158,.05); }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .sym { font-size: 14px; font-weight: 800; color: #58a6ff; letter-spacing: -.02em; }
+    .rk {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; border-radius: 50%;
+      font-size: 11px; font-weight: 800;
+    }
+    .rk.s-hi  { background: #3fb950; color: #0d1117; }
+    .rk.s-lo  { background: #21262d; color: #8b949e; }
+    .rk.o-hi  { background: #d29922; color: #0d1117; }
+    .pos { color: #3fb950; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .neg { color: #f85149; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .na  { color: #484f58; }
+    .num { color: #c9d1d9; font-variant-numeric: tabular-nums; }
+
+    @media (max-width: 760px) {
+      .cards  { grid-template-columns: 1fr; }
+      header  { flex-direction: column; align-items: flex-start; }
+      main    { padding: 12px; gap: 20px; }
     }
   </style>
 </head>
 <body>
 <header>
-  <div class="hd-left">
-    <h1>VIX × Breadth 选股信号</h1>
-    <p>信号激活时参考 · 两种选股策略对比 · 数据来自 Yahoo Finance</p>
+  <div>
+    <div class="hd-title">VIX × Breadth 选股信号</div>
+    <div class="hd-sub">信号激活时参考 · 数据来自 Yahoo Finance</div>
   </div>
   <div class="hd-right">
-    <span id="clock">-</span>
-    <button id="runBtn">刷新</button>
+    <span id="clock">—</span>
+    <button id="runBtn">⟳ 刷新</button>
   </div>
 </header>
 """ + _NAV + r"""
 <main>
-  <div class="universe">
-    <div class="universe-label">
-      <span>NASDAQ100 / QQQ</span>
-      <span class="universe-meta" id="nasdaqMeta"></span>
+  <div>
+    <div class="sec-hd">
+      <span class="sec-title">NASDAQ 100 / QQQ</span>
+      <span class="sec-meta" id="nasdaqMeta">—</span>
     </div>
     <div class="cards">
       <div class="card">
         <div class="card-hd stable">
           <span class="card-title stable">稳健核心 · ADV Top5</span>
-          <span class="card-sub">CAGR 44–49% · MaxDD ~22%</span>
+          <span class="card-perf">CAGR 44–49% · MaxDD ~22%</span>
         </div>
         <div class="msg-row" id="nasdaqAdvMsg">正在加载…</div>
         <table id="nasdaqAdvTbl" style="display:none">
-          <thead><tr><th>股票</th><th>排名</th><th>收盘价</th><th>距MA200</th><th>63日均成交额</th></tr></thead>
+          <thead><tr><th>股票</th><th>#</th><th>收盘价</th><th>距 MA200</th><th>63日均量</th></tr></thead>
           <tbody id="nasdaqAdvBody"></tbody>
         </table>
-        <div class="card-note">绿色 Top3 = ADV Top3（更集中）；浅色 4–5 = 可选扩展。</div>
+        <div class="card-note">深绿 Top3 建议买入 · 浅色 4–5 为可选扩展</div>
       </div>
       <div class="card">
         <div class="card-hd offens">
           <span class="card-title offens">进攻首选 · ADV Top10 → MA200 Top3</span>
-          <span class="card-sub">CAGR 52% · MaxDD ~32%</span>
+          <span class="card-perf">CAGR 52% · MaxDD ~32%</span>
         </div>
         <div class="msg-row" id="nasdaqMaMsg">正在加载…</div>
         <table id="nasdaqMaTbl" style="display:none">
-          <thead><tr><th>股票</th><th>动量排名</th><th>收盘价</th><th>MA200</th><th>距MA200 ↑</th><th>63日均成交额</th></tr></thead>
+          <thead><tr><th>股票</th><th>#</th><th>收盘价</th><th>MA200</th><th>超出幅度 ↑</th><th>63日均量</th></tr></thead>
           <tbody id="nasdaqMaBody"></tbody>
         </table>
-        <div class="card-note">ADV Top10 中按 close/MA200−1 最高的3只；动量最强但回撤更大。</div>
+        <div class="card-note">ADV Top10 中选距 MA200 最远的 3 只 · 动量最强但回撤更大</div>
       </div>
     </div>
   </div>
-  <div class="universe">
-    <div class="universe-label">
-      <span>S&amp;P500 / SPY</span>
-      <span class="universe-meta" id="sp500Meta"></span>
+  <div>
+    <div class="sec-hd">
+      <span class="sec-title">S&amp;P 500 / SPY</span>
+      <span class="sec-meta" id="sp500Meta">—</span>
     </div>
     <div class="cards">
       <div class="card">
         <div class="card-hd stable">
           <span class="card-title stable">稳健核心 · ADV Top5</span>
-          <span class="card-sub">流动性加权，等权买入</span>
+          <span class="card-perf">流动性加权 · 等权买入</span>
         </div>
         <div class="msg-row" id="sp500AdvMsg">正在加载…</div>
         <table id="sp500AdvTbl" style="display:none">
-          <thead><tr><th>股票</th><th>排名</th><th>收盘价</th><th>距MA200</th><th>63日均成交额</th></tr></thead>
+          <thead><tr><th>股票</th><th>#</th><th>收盘价</th><th>距 MA200</th><th>63日均量</th></tr></thead>
           <tbody id="sp500AdvBody"></tbody>
         </table>
-        <div class="card-note">绿色 Top3 = ADV Top3；同公司双重股权已去重。</div>
+        <div class="card-note">深绿 Top3 · 同公司双重股权已去重</div>
       </div>
       <div class="card">
         <div class="card-hd offens">
           <span class="card-title offens">进攻首选 · ADV Top10 → MA200 Top3</span>
-          <span class="card-sub">动量最强3只</span>
+          <span class="card-perf">动量最强 3 只</span>
         </div>
         <div class="msg-row" id="sp500MaMsg">正在加载…</div>
         <table id="sp500MaTbl" style="display:none">
-          <thead><tr><th>股票</th><th>动量排名</th><th>收盘价</th><th>MA200</th><th>距MA200 ↑</th><th>63日均成交额</th></tr></thead>
+          <thead><tr><th>股票</th><th>#</th><th>收盘价</th><th>MA200</th><th>超出幅度 ↑</th><th>63日均量</th></tr></thead>
           <tbody id="sp500MaBody"></tbody>
         </table>
-        <div class="card-note">ADV Top10 池内按 MA200 距离排序，取前3。</div>
+        <div class="card-note">ADV Top10 池内按 MA200 距离排序，取前 3</div>
       </div>
     </div>
   </div>
@@ -616,26 +661,32 @@ SIGNALS_HTML = r"""<!doctype html>
   }
   function distCell(pct) {
     if (pct == null) return '<span class="na">N/A</span>';
-    const cls  = pct >= 0 ? "pos" : "neg";
-    const sign = pct >= 0 ? "+" : "";
-    return '<span class="' + cls + '">' + sign + P1.format(pct) + "%</span>";
+    const cls = pct >= 0 ? "pos" : "neg";
+    const sgn = pct >= 0 ? "+" : "";
+    return '<span class="' + cls + '">' + sgn + P1.format(pct) + "%</span>";
   }
   function advRow(r) {
-    const bc = r.rank <= 3 ? "stable" : "dim";
-    return "<tr><td><span class='sym'>" + r.symbol + "</span></td>"
-      + "<td><span class='badge " + bc + "'>" + r.rank + "</span></td>"
-      + "<td>$" + P2.format(r.close) + "</td>"
+    const rc = r.rank <= 3 ? "s-hi" : "s-lo";
+    return "<tr>"
+      + "<td><span class='sym'>" + r.symbol + "</span></td>"
+      + "<td><span class='rk " + rc + "'>" + r.rank + "</span></td>"
+      + "<td class='num'>$" + P2.format(r.close) + "</td>"
       + "<td>" + distCell(r.distance_pct) + "</td>"
-      + "<td>" + money(r.adv63) + "</td></tr>";
+      + "<td class='num'>" + money(r.adv63) + "</td>"
+      + "</tr>";
   }
   function maRow(r) {
-    const ma = r.ma200 != null ? "$" + P2.format(r.ma200) : '<span class="na">N/A</span>';
-    return "<tr><td><span class='sym'>" + r.symbol + "</span></td>"
-      + "<td><span class='badge offens'>" + r.rank + "</span></td>"
-      + "<td>$" + P2.format(r.close) + "</td>"
+    const ma = r.ma200 != null
+      ? "<span class='num'>$" + P2.format(r.ma200) + "</span>"
+      : '<span class="na">N/A</span>';
+    return "<tr>"
+      + "<td><span class='sym'>" + r.symbol + "</span></td>"
+      + "<td><span class='rk o-hi'>" + r.rank + "</span></td>"
+      + "<td class='num'>$" + P2.format(r.close) + "</td>"
       + "<td>" + ma + "</td>"
       + "<td>" + distCell(r.distance_pct) + "</td>"
-      + "<td>" + money(r.adv63) + "</td></tr>";
+      + "<td class='num'>" + money(r.adv63) + "</td>"
+      + "</tr>";
   }
   function show(tblId, msgId, rows, renderFn) {
     document.getElementById(tblId.replace("Tbl","Body")).innerHTML = rows.map(renderFn).join("");
@@ -655,7 +706,7 @@ SIGNALS_HTML = r"""<!doctype html>
         el.textContent = "正在抓取并计算…"; el.className = "msg-row"; el.style.display = "";
       });
       ["AdvTbl","MaTbl"].forEach(s => { document.getElementById(p+s).style.display = "none"; });
-      document.getElementById(p+"Meta").textContent = "";
+      document.getElementById(p+"Meta").textContent = "—";
     });
   }
   function setError(msg) {
