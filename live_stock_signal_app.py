@@ -827,9 +827,12 @@ BREADTH_HTML = r"""<!DOCTYPE html>
     <div class="dlt gray" id="dMom">—</div>
   </div>
   <div style="margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <span class="lbl-sm">VIX State</span>
+    <span class="lbl-sm">Phase</span>
+    <span class="badge" id="phaseTag">—</span>
+    <span class="lbl-sm" style="margin-left:4px">NTSS</span>
     <span class="badge" id="stateTag">—</span>
-    <span class="lbl-sm" style="margin-left:6px">BL=35 Entry</span>
+    <span class="badge" id="stageTag" style="display:none">—</span>
+    <span class="lbl-sm" style="margin-left:4px">BL=35</span>
     <span class="badge" id="trigTag">—</span>
     <span style="font-size:10px;color:#484f58;margin-left:8px" id="lastBar">—</span>
   </div>
@@ -946,6 +949,45 @@ function updateStatus() {
   const ok = cur.bd!=null && cur.bd<35;
   tr.textContent = ok ? "BL=35 ✓ ALLOW" : "BL=35 ✗ WAIT";
   tr.className   = "badge " + (ok ? "allow" : "wait");
+
+  // ── Market phase (Strong × BD) ───────────────────────────────────────────
+  const ph = document.getElementById("phaseTag");
+  if (ph && cur.s!=null && cur.bd!=null) {
+    const s = cur.s, bd = cur.bd, mid = cur.mid;
+    let phase, cls;
+    if      (s>55 && bd<20)  { phase="A 全面牛市"; cls="safe"; }
+    else if (s>40 && bd<30)  { phase="B 强势整固"; cls="safe"; }
+    else if (s>35 && bd<45)  { phase="C 牛市回调"; cls="safe"; }
+    else if (s>25 && bd<35)  { phase="D 修复中";   cls="safe"; }
+    else if (s>20 && bd<50)  { phase="E 震荡整理"; cls="caution"; }
+    else if (s<20 && bd<40)  { phase="F 弱势未崩"; cls="caution"; }
+    else if (s<30 && bd>50)  { phase="G 宽度承压"; cls="panic"; }
+    else                     { phase="H 恐慌出清"; cls="panic"; }
+    ph.textContent = phase;
+    ph.className   = "badge " + cls;
+  }
+
+  // ── NTSS recovery stage (only shown when in panic/bear phase) ────────────
+  const sg = document.getElementById("stageTag");
+  if (sg && cur.mid!=null) {
+    const m = cur.mid, s = cur.s, bd = cur.bd;
+    const inPanic = s < 20 && bd > 55;
+    if (inPanic) {
+      let stage, scls;
+      if      (m < -3) { stage="① 极端恐慌";  scls="panic"; }
+      else if (m < -1) { stage="② 恐慌中";    scls="panic"; }
+      else if (m <  0) { stage="③ 临近0轴";   scls="caution"; }
+      else if (m <  1) { stage="④ 刚穿零";    scls="caution"; }
+      else if (m <  2) { stage="⑤ 弱确认";    scls="caution"; }
+      else             { stage="⑥ 强确认 ★";  scls="safe"; }
+      sg.textContent = stage;
+      sg.className   = "badge " + scls;
+      sg.style.display = "";
+    } else {
+      sg.style.display = "none";
+    }
+  }
+
   document.getElementById("lastBar").textContent = "Last: " + cur.t + " ET";
 }
 
@@ -1022,8 +1064,11 @@ function makeLayout(recs) {
   const shapes = [
     ...buyPeriodShapes(recs),
     rl("y",35),rl("y",50),rl("y2",35),rl("y2",50),
-    rl("y3",2),rl("y4",5),rl("y4",-5),
+    rl("y3",2),rl("y3",1),
+    {type:"line",xref:"paper",yref:"y3",x0:0,x1:1,y0:-1,y1:-1,line:{color:"rgba(248,81,73,0.35)",width:1,dash:"dot"}},
+    {type:"line",xref:"paper",yref:"y3",x0:0,x1:1,y0:-3,y1:-3,line:{color:"rgba(248,81,73,0.6)",width:1,dash:"dot"}},
     {type:"line",xref:"paper",yref:"y3",x0:0,x1:1,y0:0,y1:0,line:{color:"rgba(139,148,158,0.6)",width:1.5}},
+    rl("y4",5),rl("y4",-5),
     {type:"line",xref:"paper",yref:"y4",x0:0,x1:1,y0:0,y1:0,line:{color:"rgba(139,148,158,0.6)",width:1.5}},
   ];
   const lbl  = (yr, txt) => ({xref:"paper",yref:yr,x:0.01,y:1,text:"<b>"+txt+"</b>",
@@ -1053,7 +1098,8 @@ function makeLayout(recs) {
       lbl("y4", "Net Momentum"),
       rlbl("y",35,"35"),rlbl("y",50,"50"),
       rlbl("y2",35,"35"),rlbl("y2",50,"50"),
-      rlbl("y3",2," 2"),rlbl("y3",0," 0"),
+      rlbl("y3",2," 2"),rlbl("y3",1," 1"),rlbl("y3",0," 0"),
+      rlbl("y3",-1,"-1"),rlbl("y3",-3,"-3"),
       rlbl("y4",5,"+5"),rlbl("y4",-5,"-5"),
     ],
   };
