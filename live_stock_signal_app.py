@@ -10,6 +10,7 @@ Routes:
 
 from __future__ import annotations
 
+import gc
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -31,7 +32,7 @@ NASDAQ100_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
 SP500_URL     = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 CACHE_DIR     = Path(os.environ.get("CACHE_DIR", "/tmp"))
 
-BREADTH_PERIOD     = "3mo"
+BREADTH_PERIOD     = "2mo"
 BREADTH_SMOOTH     = 3
 BREADTH_MIN_STOCKS = 100
 
@@ -55,6 +56,14 @@ def cache_get(key: str, ttl_minutes: int) -> Any | None:
 def cache_set(key: str, value: Any) -> Any:
     _memory_cache[key] = (datetime.now(timezone.utc), value)
     return value
+
+
+def cache_evict_stale(max_age_minutes: int = 420) -> None:
+    """Delete cache entries older than max_age_minutes to prevent unbounded growth."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    stale = [k for k, (ts, _) in list(_memory_cache.items()) if ts < cutoff]
+    for k in stale:
+        del _memory_cache[k]
 
 
 # ── Startup: launch breadth background thread ─────────────────────────────────
@@ -149,7 +158,7 @@ def fetch_history(symbols: list[str]) -> dict[str, pd.DataFrame]:
         return cached
     yf_symbols = [s.replace(".", "-") for s in symbols]
     frame = yf.download(
-        yf_symbols, period="18mo", interval="1d",
+        yf_symbols, period="13mo", interval="1d",
         group_by="ticker", auto_adjust=True, progress=False, threads=True,
     )
     return cache_set(key, flatten_yfinance_frame(frame, yf_symbols))
@@ -308,11 +317,15 @@ def compute_breadth_data() -> dict:
     raw = yf.download(yf_symbols, period=BREADTH_PERIOD, interval="1h",
                       auto_adjust=True, progress=False, threads=True)
     hourly_df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+    del raw
     hourly_df = hourly_df.loc[:, hourly_df.isna().mean() < 0.5]
     if hourly_df.index.tz is None:
         hourly_df.index = hourly_df.index.tz_localize("UTC")
 
+    n_stocks = daily_df.shape[1]
     breadth = _calculate_breadth(daily_df, hourly_df)
+    del daily_df, hourly_df
+    gc.collect()
 
     # VIX
     vix_frames: dict[str, pd.Series] = {}
@@ -347,9 +360,11 @@ def compute_breadth_data() -> dict:
          "a200": v(row.get("above_200"))}
         for i, (_, row) in enumerate(breadth.iterrows())
     ]
+    del breadth
+    gc.collect()
     print(f"[breadth] done — {len(records)} bars")
     return {"generated_at": datetime.now().isoformat(timespec="seconds"),
-            "timeframe": "1H", "n_stocks": daily_df.shape[1], "records": records}
+            "timeframe": "1H", "n_stocks": n_stocks, "records": records}
 
 
 def _bg_refresh_breadth() -> None:
@@ -361,6 +376,7 @@ def _bg_refresh_breadth() -> None:
         try:
             data = compute_breadth_data()
             cache_set("breadth", data)
+            cache_evict_stale()
             _breadth_error = ""
             time.sleep(3600)
         except Exception as e:
