@@ -32,7 +32,7 @@ NASDAQ100_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
 SP500_URL     = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 CACHE_DIR     = Path(os.environ.get("CACHE_DIR", "/tmp"))
 
-BREADTH_PERIOD     = "2mo"
+BREADTH_PERIOD     = "3mo"
 BREADTH_SMOOTH     = 3
 BREADTH_MIN_STOCKS = 100
 
@@ -231,6 +231,50 @@ def compute_signals(universe: str, adv_pool_size: int = 10) -> dict[str, Any]:
             "adv_selected": adv_selected, "ma200_selected": ma200_selected}
 
 
+# ── Breadth: incremental hourly data fetch ────────────────────────────────────
+def _fetch_hourly(yf_symbols: list[str]) -> pd.DataFrame:
+    """Return hourly close DataFrame for yf_symbols.
+
+    First call (cache cold): downloads the full BREADTH_PERIOD window.
+    Subsequent calls: downloads only the last 2 days and splices into the
+    cached data, so a 3-month re-download is never needed on hourly refresh.
+    """
+    cached: pd.DataFrame | None = cache_get("hourly_raw", ttl_minutes=180)
+    if cached is not None:
+        print("[breadth] incremental hourly update (2d)…")
+        recent_raw = yf.download(yf_symbols, period="2d", interval="1h",
+                                 auto_adjust=True, progress=False, threads=True)
+        if recent_raw.empty:
+            return cached
+        recent = recent_raw["Close"] if isinstance(recent_raw.columns, pd.MultiIndex) else recent_raw
+        del recent_raw
+        if recent.index.tz is None:
+            recent.index = recent.index.tz_localize("UTC")
+        # Keep cached bars that predate the fresh window, trimmed to ~3 months
+        cutoff  = recent.index.min()
+        oldest  = recent.index.max() - pd.Timedelta(days=93)
+        base    = cached[(cached.index >= oldest) & (cached.index < cutoff)]
+        merged  = pd.concat([base, recent])
+        merged  = merged.loc[:, merged.isna().mean() < 0.5]
+        del recent, base
+        gc.collect()
+        cache_set("hourly_raw", merged)
+        return merged
+
+    # Cold start — full download
+    print(f"[breadth] full hourly download ({BREADTH_PERIOD})…")
+    raw = yf.download(yf_symbols, period=BREADTH_PERIOD, interval="1h",
+                      auto_adjust=True, progress=False, threads=True)
+    hourly_df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+    del raw
+    hourly_df = hourly_df.loc[:, hourly_df.isna().mean() < 0.5]
+    if hourly_df.index.tz is None:
+        hourly_df.index = hourly_df.index.tz_localize("UTC")
+    gc.collect()
+    cache_set("hourly_raw", hourly_df)
+    return hourly_df
+
+
 # ── Breadth: calculation ──────────────────────────────────────────────────────
 def _ema(s: pd.Series, span: int) -> pd.Series:
     return s.ewm(span=span, adjust=False, min_periods=1).mean()
@@ -312,15 +356,8 @@ def compute_breadth_data() -> dict:
     daily_df = pd.DataFrame({s: df["Close"] for s, df in history.items()
                              if "Close" in df.columns})
 
-    # Hourly
-    print(f"[breadth] downloading {len(yf_symbols)} tickers hourly…")
-    raw = yf.download(yf_symbols, period=BREADTH_PERIOD, interval="1h",
-                      auto_adjust=True, progress=False, threads=True)
-    hourly_df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
-    del raw
-    hourly_df = hourly_df.loc[:, hourly_df.isna().mean() < 0.5]
-    if hourly_df.index.tz is None:
-        hourly_df.index = hourly_df.index.tz_localize("UTC")
+    # Hourly — incremental after first load
+    hourly_df = _fetch_hourly(yf_symbols)
 
     n_stocks = daily_df.shape[1]
     breadth = _calculate_breadth(daily_df, hourly_df)
