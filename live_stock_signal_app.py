@@ -638,9 +638,9 @@ SIGNALS_HTML = r"""<!doctype html>
 </header>
 """ + _NAV + r"""
 <main>
-  <div>
+  <div id="secNasdaq">
     <div class="sec-hd">
-      <span class="sec-title">NASDAQ 100 / QQQ</span>
+      <span class="sec-title" id="nasdaqTitle">NASDAQ 100 / QQQ</span>
       <span class="sec-meta" id="nasdaqMeta">—</span>
     </div>
     <div class="cards">
@@ -670,7 +670,7 @@ SIGNALS_HTML = r"""<!doctype html>
       </div>
     </div>
   </div>
-  <div>
+  <div id="secSp500">
     <div class="sec-hd">
       <span class="sec-title">S&amp;P 500 / SPY</span>
       <span class="sec-meta" id="sp500Meta">—</span>
@@ -761,6 +761,8 @@ SIGNALS_HTML = r"""<!doctype html>
       ["AdvTbl","MaTbl"].forEach(s => { document.getElementById(p+s).style.display = "none"; });
       document.getElementById(p+"Meta").textContent = "—";
     });
+    document.getElementById("secSp500").style.display = "";
+    document.getElementById("nasdaqTitle").textContent = "NASDAQ 100 / QQQ";
   }
   function setError(msg) {
     ["nasdaq","sp500"].forEach(p =>
@@ -769,6 +771,15 @@ SIGNALS_HTML = r"""<!doctype html>
         el.textContent = "错误: " + msg; el.className = "msg-row err";
       })
     );
+  }
+  function checkDuplicates(n, s) {
+    const syms = list => list.map(r => r.symbol).join(",");
+    const same = syms(n.adv_selected) === syms(s.adv_selected) &&
+                 syms(n.ma200_selected) === syms(s.ma200_selected);
+    document.getElementById("secSp500").style.display = same ? "none" : "";
+    document.getElementById("nasdaqTitle").textContent = same
+      ? "NASDAQ 100 / QQQ  ≡  S&P 500 / SPY"
+      : "NASDAQ 100 / QQQ";
   }
   async function runSignal() {
     const btn = document.getElementById("runBtn");
@@ -780,6 +791,7 @@ SIGNALS_HTML = r"""<!doctype html>
       document.getElementById("clock").textContent = data.generated_at.replace("T"," ");
       renderUniverse(data.nasdaq100, "nasdaq");
       renderUniverse(data.sp500,     "sp500");
+      checkDuplicates(data.nasdaq100, data.sp500);
     } catch(err) { setError(err.message); }
     finally { btn.disabled = false; }
   }
