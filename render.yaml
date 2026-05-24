@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: mvs-signal
+    name: stock-signal
     env: python
     region: oregon
     plan: free
