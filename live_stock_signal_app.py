@@ -8,7 +8,7 @@ Strategies shown side by side for NASDAQ100 and S&P500:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,8 @@ import requests
 import yfinance as yf
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
+
+from ibkr_quant.breadth import BreadthComputer
 
 
 import os
@@ -271,6 +273,37 @@ def api_signal(universe: str) -> JSONResponse:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@app.get("/api/breadth")
+def api_breadth() -> JSONResponse:
+    cached = cache_get("breadth:daily", ttl_minutes=60)
+    if cached is not None:
+        return JSONResponse(cached)
+
+    try:
+        snapshot = BreadthComputer(CACHE_DIR / "ema_state.json").update(date.today())
+        payload = {
+            "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "date": snapshot.date.isoformat(),
+            "s5th": snapshot.s5th,
+            "s5fi": snapshot.s5fi,
+            "s5tw": snapshot.s5tw,
+            "previous_s5th": snapshot.previous_s5th,
+            "previous_s5fi": snapshot.previous_s5fi,
+            "previous_s5tw": snapshot.previous_s5tw,
+            "delta_s5th": snapshot.s5th - snapshot.previous_s5th,
+            "delta_s5fi": snapshot.s5fi - snapshot.previous_s5fi,
+            "delta_s5tw": snapshot.s5tw - snapshot.previous_s5tw,
+        }
+        return JSONResponse(cache_set("breadth:daily", payload))
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.get("/breadth", response_class=HTMLResponse)
+def breadth_page() -> str:
+    return BREADTH_HTML
+
+
 HTML = r"""
 <!doctype html>
 <html lang="zh">
@@ -330,6 +363,23 @@ HTML = r"""
       color: white;
     }
     button:disabled { opacity: .55; cursor: wait; }
+    .nav {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 0 24px;
+      display: flex;
+      gap: 4px;
+    }
+    .nav a {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      border-bottom: 2px solid transparent;
+    }
+    .nav a:hover { color: var(--text); }
+    .nav a.active { color: var(--stable-dark); border-bottom-color: var(--stable); }
     main { max-width: 1300px; margin: 0 auto; padding: 18px; display: grid; gap: 20px; }
 
     /* Universe block */
@@ -428,6 +478,10 @@ HTML = r"""
     <button id="runBtn">刷新</button>
   </div>
 </header>
+<nav class="nav">
+  <a class="active" href="/">选股信号</a>
+  <a href="/breadth">市场宽度</a>
+</nav>
 
 <main>
   <!-- NASDAQ100 -->
@@ -610,6 +664,194 @@ HTML = r"""
 
   document.getElementById("runBtn").addEventListener("click", runSignal);
   runSignal();
+</script>
+</body>
+</html>
+"""
+
+BREADTH_HTML = r"""
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Market Vital Signs (MVS) 市场宽度</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --text: #1b1f24;
+      --muted: #6b7280;
+      --line: #e2e6ed;
+      --stable: #0f766e;
+      --stable-bg: #f0fdf4;
+      --stable-dark: #166534;
+      --warn: #b45309;
+      --warn-bg: #fffbeb;
+      --neg: #b42318;
+      --neg-bg: #fef2f2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+    }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .hd-left h1 { margin: 0 0 3px; font-size: 18px; }
+    .hd-left p { margin: 0; font-size: 13px; color: var(--muted); }
+    .nav {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 0 24px;
+      display: flex;
+      gap: 4px;
+    }
+    .nav a {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      border-bottom: 2px solid transparent;
+    }
+    .nav a:hover { color: var(--text); }
+    .nav a.active { color: var(--stable-dark); border-bottom-color: var(--stable); }
+    main { max-width: 1100px; margin: 0 auto; padding: 18px; display: grid; gap: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+    .value {
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1.1;
+      margin-top: 8px;
+      font-variant-numeric: tabular-nums;
+    }
+    .delta { margin-top: 6px; font-size: 13px; font-weight: 700; }
+    .pos { color: var(--stable-dark); }
+    .neg { color: var(--neg); }
+    .meta {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px 16px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    button {
+      height: 34px;
+      padding: 0 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--stable);
+      color: white;
+    }
+    .msg { color: var(--muted); }
+    .err { color: var(--neg); }
+    @media (max-width: 800px) {
+      .grid { grid-template-columns: 1fr; }
+      header { flex-direction: column; align-items: flex-start; }
+      main { padding: 12px; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="hd-left">
+    <h1>Market Vital Signs <span style="font-size:13px;font-weight:400;opacity:.6;">MVS</span></h1>
+    <p>S&amp;P 500 市场宽度 · EMA20 / EMA50 / EMA200</p>
+  </div>
+  <button id="runBtn">刷新</button>
+</header>
+<nav class="nav">
+  <a href="/">选股信号</a>
+  <a class="active" href="/breadth">市场宽度</a>
+</nav>
+<main>
+  <div class="meta">
+    <span id="status">正在加载市场宽度…</span>
+    <span id="time">—</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <div class="label">S5TH · Above EMA200</div>
+      <div class="value" id="s5th">—</div>
+      <div class="delta" id="dS5th">—</div>
+    </div>
+    <div class="card">
+      <div class="label">S5FI · Above EMA50</div>
+      <div class="value" id="s5fi">—</div>
+      <div class="delta" id="dS5fi">—</div>
+    </div>
+    <div class="card">
+      <div class="label">S5TW · Above EMA20</div>
+      <div class="value" id="s5tw">—</div>
+      <div class="delta" id="dS5tw">—</div>
+    </div>
+  </div>
+</main>
+<script>
+  const P1 = new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  function pct(v) { return P1.format(v) + "%"; }
+  function delta(v) {
+    const cls = v >= 0 ? "pos" : "neg";
+    const sign = v >= 0 ? "+" : "";
+    return `<span class="${cls}">${sign}${P1.format(v)} pts vs prev</span>`;
+  }
+  async function loadBreadth() {
+    const btn = document.getElementById("runBtn");
+    btn.disabled = true;
+    document.getElementById("status").textContent = "正在计算市场宽度…";
+    document.getElementById("status").className = "msg";
+    try {
+      const res = await fetch("/api/breadth");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "请求失败");
+      document.getElementById("s5th").textContent = pct(data.s5th);
+      document.getElementById("s5fi").textContent = pct(data.s5fi);
+      document.getElementById("s5tw").textContent = pct(data.s5tw);
+      document.getElementById("dS5th").innerHTML = delta(data.delta_s5th);
+      document.getElementById("dS5fi").innerHTML = delta(data.delta_s5fi);
+      document.getElementById("dS5tw").innerHTML = delta(data.delta_s5tw);
+      document.getElementById("status").textContent = "数据日期 " + data.date;
+      document.getElementById("time").textContent = data.generated_at.replace("T", " ");
+    } catch (err) {
+      document.getElementById("status").textContent = "错误: " + err.message;
+      document.getElementById("status").className = "err";
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  document.getElementById("runBtn").addEventListener("click", loadBreadth);
+  loadBreadth();
 </script>
 </body>
 </html>
