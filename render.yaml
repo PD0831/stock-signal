@@ -9,3 +9,5 @@ services:
     envVars:
       - key: CACHE_DIR
         value: /tmp
+      - key: WEB_CONCURRENCY
+        value: "1"

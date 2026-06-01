@@ -10,8 +10,11 @@ Routes:
 
 from __future__ import annotations
 
+import gc
+import hashlib
 import threading
 import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from io import StringIO
@@ -34,27 +37,47 @@ CACHE_DIR     = Path(os.environ.get("CACHE_DIR", "/tmp"))
 BREADTH_PERIOD     = "3mo"
 BREADTH_SMOOTH     = 3
 BREADTH_MIN_STOCKS = 100
+_YF_BATCH_SIZE     = 50
 
-# ── In-memory cache ───────────────────────────────────────────────────────────
-_memory_cache: dict[str, tuple[datetime, Any]] = {}
+# ── In-memory cache (LRU-bounded; evicts on expiry to free RAM on 512MB tier) ──
+_memory_cache: "OrderedDict[str, tuple[datetime, Any]]" = OrderedDict()
+_CACHE_MAX_ITEMS = 8           # hard cap on cached frames; older ones are dropped
+_cache_lock = threading.Lock()
 _breadth_computing  = False
 _breadth_error: str = ""
 _breadth_started_at: datetime | None = None
 
 
 def cache_get(key: str, ttl_minutes: int) -> Any | None:
-    item = _memory_cache.get(key)
-    if item is None:
-        return None
-    ts, value = item
-    if datetime.now(timezone.utc) - ts > timedelta(minutes=ttl_minutes):
-        return None
-    return value
+    with _cache_lock:
+        item = _memory_cache.get(key)
+        if item is None:
+            return None
+        ts, value = item
+        if datetime.now(timezone.utc) - ts > timedelta(minutes=ttl_minutes):
+            # expired → delete immediately so the large frame can be GC'd
+            del _memory_cache[key]
+            gc.collect()
+            return None
+        _memory_cache.move_to_end(key)   # mark as most-recently-used
+        return value
 
 
 def cache_set(key: str, value: Any) -> Any:
-    _memory_cache[key] = (datetime.now(timezone.utc), value)
+    with _cache_lock:
+        _memory_cache[key] = (datetime.now(timezone.utc), value)
+        _memory_cache.move_to_end(key)
+        # evict least-recently-used entries beyond the cap
+        while len(_memory_cache) > _CACHE_MAX_ITEMS:
+            _memory_cache.popitem(last=False)
+        gc.collect()
     return value
+
+
+def cache_symbols_key(prefix: str, symbols: list[str]) -> str:
+    normalized = ",".join(sorted(s.replace(".", "-").upper() for s in symbols))
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}:{len(symbols)}:{digest}"
 
 
 # ── Startup: launch breadth background thread ─────────────────────────────────
@@ -131,28 +154,81 @@ def flatten_yfinance_frame(frame: pd.DataFrame, symbols: list[str]) -> dict[str,
         level0 = {str(x) for x in frame.columns.get_level_values(0)}
         for symbol in symbols:
             try:
-                sub = frame[symbol].copy() if symbol in level0 else frame.xs(symbol, axis=1, level=1).copy()
+                sub = frame[symbol] if symbol in level0 else frame.xs(symbol, axis=1, level=1)
             except Exception:
                 continue
             if "Close" in sub.columns and "Volume" in sub.columns:
-                data[symbol] = sub[["Close", "Volume"]].dropna(how="all")
+                # column selection returns a fresh small frame; keep only what we need
+                data[symbol] = sub[["Close", "Volume"]].dropna(how="all").astype("float32")
     else:
         if len(symbols) == 1 and "Close" in frame.columns and "Volume" in frame.columns:
             data[symbols[0]] = frame[["Close", "Volume"]].dropna(how="all")
     return data
 
 
+_HISTORY_BATCH = _YF_BATCH_SIZE   # download in batches to cap peak memory
+
+
 def fetch_history(symbols: list[str]) -> dict[str, pd.DataFrame]:
-    key = "history:" + ",".join(symbols)
+    key = cache_symbols_key("history", symbols)
     cached = cache_get(key, ttl_minutes=45)
     if cached is not None:
         return cached
     yf_symbols = [s.replace(".", "-") for s in symbols]
-    frame = yf.download(
-        yf_symbols, period="18mo", interval="1d",
-        group_by="ticker", auto_adjust=True, progress=False, threads=True,
-    )
-    return cache_set(key, flatten_yfinance_frame(frame, yf_symbols))
+    data: dict[str, pd.DataFrame] = {}
+    for i in range(0, len(yf_symbols), _HISTORY_BATCH):
+        batch = yf_symbols[i:i + _HISTORY_BATCH]
+        frame = yf.download(
+            batch, period="18mo", interval="1d",
+            group_by="ticker", auto_adjust=True, progress=False, threads=True,
+        )
+        data.update(flatten_yfinance_frame(frame, batch))
+        del frame          # release the large multiindex frame before next batch
+        gc.collect()
+    return cache_set(key, data)
+
+
+def _close_columns_from_download(frame: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame()
+    if not isinstance(frame.columns, pd.MultiIndex):
+        if len(symbols) == 1 and "Close" in frame.columns:
+            return frame[["Close"]].rename(columns={"Close": symbols[0]})
+        return frame
+
+    level0 = {str(x) for x in frame.columns.get_level_values(0)}
+    closes: dict[str, pd.Series] = {}
+    for symbol in symbols:
+        try:
+            if symbol in level0:
+                sub = frame[symbol]
+                if "Close" in sub.columns:
+                    closes[symbol] = sub["Close"]
+            else:
+                sub = frame.xs(symbol, axis=1, level=1)
+                if "Close" in sub.columns:
+                    closes[symbol] = sub["Close"]
+        except Exception:
+            continue
+    return pd.DataFrame(closes)
+
+
+def _download_hourly_closes(yf_symbols: list[str]) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for i in range(0, len(yf_symbols), _YF_BATCH_SIZE):
+        batch = yf_symbols[i:i + _YF_BATCH_SIZE]
+        raw = yf.download(
+            batch, period=BREADTH_PERIOD, interval="1h",
+            group_by="ticker", auto_adjust=True, progress=False, threads=True,
+        )
+        closes = _close_columns_from_download(raw, batch)
+        if not closes.empty:
+            frames.append(closes.astype("float32"))
+        del raw
+        gc.collect()
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, axis=1)
 
 
 def issuer_key(symbol: str) -> str:
@@ -304,10 +380,8 @@ def compute_breadth_data() -> dict:
                              if "Close" in df.columns})
 
     # Hourly
-    print(f"[breadth] downloading {len(yf_symbols)} tickers hourly…")
-    raw = yf.download(yf_symbols, period=BREADTH_PERIOD, interval="1h",
-                      auto_adjust=True, progress=False, threads=True)
-    hourly_df = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
+    print(f"[breadth] downloading {len(yf_symbols)} tickers hourly in batches…")
+    hourly_df = _download_hourly_closes(yf_symbols)
     hourly_df = hourly_df.loc[:, hourly_df.isna().mean() < 0.5]
     if hourly_df.index.tz is None:
         hourly_df.index = hourly_df.index.tz_localize("UTC")
