@@ -384,6 +384,19 @@ def current_market_status() -> dict[str, Any]:
     return status
 
 
+def previous_day_close_record(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if len(records) < 2:
+        return None
+    current_day = str(records[-1].get("t", "")).split(" ")[0]
+    if not current_day:
+        return None
+    for record in reversed(records[:-1]):
+        record_day = str(record.get("t", "")).split(" ")[0]
+        if record_day and record_day < current_day:
+            return record
+    return None
+
+
 # ── Breadth: calculation ──────────────────────────────────────────────────────
 def _ema(s: pd.Series, span: int) -> pd.Series:
     return s.ewm(span=span, adjust=False, min_periods=1).mean()
@@ -509,7 +522,9 @@ def compute_breadth_data() -> dict:
     ]
     print(f"[breadth] done — {len(records)} bars")
     return {"generated_at": datetime.now().isoformat(timespec="seconds"),
-            "timeframe": "1H", "n_stocks": daily_df.shape[1], "records": records}
+            "timeframe": "1H", "n_stocks": daily_df.shape[1],
+            "previous_day_close": previous_day_close_record(records),
+            "records": records}
 
 
 def _bg_refresh_breadth() -> None:
@@ -1188,7 +1203,8 @@ function updateStatus() {
   const n    = recs.length - 1;
   if (n < 1) return;
   const cur  = recs[n];
-  const prev = recs[n-1];
+  const prev = DATA.previous_day_close || recs[n-1];
+  const deltaLabel = DATA.previous_day_close ? " vs prior day close" : " vs prev";
   const fmt  = (v, d) => v != null ? v.toFixed(d==null?1:d) : "—";
   const sgn  = v => v > 0 ? "+" : "";
 
@@ -1201,7 +1217,7 @@ function updateStatus() {
     else if (valId==="vBD")  el.className = "val " + (cv >= 50 ? "red" : cv >= 35 ? "yellow" : "green");
     else if (valId==="vMid") el.className = "val " + (cv==null?"gray": cv<0?"red": cv<2?"yellow":"blue");
     else if (valId==="vMom") el.className = "val " + (cv==null?"gray": cv>=0?"green":"red");
-    dl.textContent = d!=null ? sgn(d)+fmt(d,2)+(sfx||"")+" vs prev" : "—";
+    dl.textContent = d!=null ? sgn(d)+fmt(d,2)+(sfx||"")+deltaLabel : "—";
     dl.className   = d!=null ? "dlt "+(posGood?(d>=0?"green":"red"):(d<=0?"green":"red")) : "dlt gray";
   }
   card("vS",  "dS",  cur.s,  prev.s,  "%", true);

@@ -129,5 +129,27 @@ class MarketStatusTests(unittest.TestCase):
         self.assertEqual(status["phase_code"], "B")
 
 
+class BreadthReferenceTests(unittest.TestCase):
+    def test_previous_day_close_record_uses_last_record_from_prior_day(self) -> None:
+        records = [
+            {"t": "2026-05-29 15:00", "s": 30.0},
+            {"t": "2026-05-29 16:00", "s": 31.0},
+            {"t": "2026-06-01 09:00", "s": 40.0},
+            {"t": "2026-06-01 10:00", "s": 41.0},
+        ]
+
+        ref = app.previous_day_close_record(records)
+
+        self.assertEqual(ref, {"t": "2026-05-29 16:00", "s": 31.0})
+
+    def test_previous_day_close_record_returns_none_without_prior_day(self) -> None:
+        records = [
+            {"t": "2026-06-01 09:00", "s": 40.0},
+            {"t": "2026-06-01 10:00", "s": 41.0},
+        ]
+
+        self.assertIsNone(app.previous_day_close_record(records))
+
+
 if __name__ == "__main__":
     unittest.main()
