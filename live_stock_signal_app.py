@@ -237,6 +237,26 @@ def issuer_key(symbol: str) -> str:
     return same.get(symbol, symbol)
 
 
+def _unique_adv_pool(rows: list[dict[str, Any]], size: int) -> list[dict[str, Any]]:
+    pool: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for r in rows:
+        ik = issuer_key(r["symbol"])
+        if ik in seen:
+            continue
+        pool.append(r)
+        seen.add(ik)
+        if len(pool) >= size:
+            break
+    return pool
+
+
+def _format_pick(r: dict[str, Any], rank: int) -> dict[str, Any]:
+    return {"symbol": r["symbol"], "close": r["close"], "adv63": r["adv63"],
+            "adv_rank": r["adv_rank"], "ma200": r["ma200"],
+            "distance_pct": r["distance_pct"], "rank": rank}
+
+
 def compute_signals(universe: str, adv_pool_size: int = 10) -> dict[str, Any]:
     symbols = fetch_current_symbols(universe)
     if not symbols:
@@ -268,16 +288,7 @@ def compute_signals(universe: str, adv_pool_size: int = 10) -> dict[str, Any]:
     rows.sort(key=lambda r: r["adv63"], reverse=True)
     for idx, r in enumerate(rows, 1):
         r["adv_rank"] = idx
-    pool: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for r in rows:
-        ik = issuer_key(r["symbol"])
-        if ik in seen:
-            continue
-        pool.append(r)
-        seen.add(ik)
-        if len(pool) >= adv_pool_size:
-            break
+    pool = _unique_adv_pool(rows, adv_pool_size)
     adv_selected = [
         {"symbol": r["symbol"], "close": r["close"], "adv63": r["adv63"],
          "adv_rank": r["adv_rank"], "ma200": r["ma200"], "distance_pct": r["distance_pct"],
@@ -286,16 +297,91 @@ def compute_signals(universe: str, adv_pool_size: int = 10) -> dict[str, Any]:
     ]
     ma_pool   = [r for r in pool if r["distance_pct"] is not None]
     ma_sorted = sorted(ma_pool, key=lambda r: r["distance_pct"], reverse=True)
-    ma200_selected = [
-        {"symbol": r["symbol"], "close": r["close"], "adv63": r["adv63"],
-         "adv_rank": r["adv_rank"], "ma200": r["ma200"], "distance_pct": r["distance_pct"],
-         "rank": idx}
-        for idx, r in enumerate(ma_sorted[:3], 1)
-    ]
+    ma200_selected = [_format_pick(r, idx) for idx, r in enumerate(ma_sorted[:3], 1)]
+    short_pool = [r for r in _unique_adv_pool(rows, 30) if r["distance_pct"] is not None]
+    short_sorted = sorted(short_pool, key=lambda r: r["distance_pct"])
+    short_selected = [_format_pick(r, idx) for idx, r in enumerate(short_sorted[:1], 1)]
     as_of = max((r["last_date"] for r in rows), default=None)
+    proxy = "QQQ" if universe == "nasdaq100" else "SPY"
     return {"as_of": as_of, "universe": universe, "universe_count": len(symbols),
             "valid_count": len(rows), "failed_count": len(failed_symbols),
-            "adv_selected": adv_selected, "ma200_selected": ma200_selected}
+            "adv_selected": adv_selected, "ma200_selected": ma200_selected,
+            "short_proxy": proxy, "short_allocation": {"proxy_pct": 70, "weak_stock_pct": 30},
+            "short_selected": short_selected}
+
+
+def classify_market_status(record: dict[str, Any] | None) -> dict[str, Any]:
+    if not record:
+        return {"signal": "unknown", "label": "状态未知", "phase_code": None,
+                "phase": "等待宽度数据", "short_type": None, "ntss_state": "UNKNOWN",
+                "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic"}
+    s = record.get("s")
+    bd = record.get("bd")
+    mid = record.get("mid")
+    mom = record.get("mom")
+    phase_code = None
+    phase = "状态未知"
+    phase_class = "wait"
+    if s is not None and bd is not None:
+        if s > 55 and bd < 20:
+            phase_code, phase, phase_class = "A", "全面牛市", "safe"
+        elif s > 40 and bd < 30:
+            phase_code, phase, phase_class = "B", "强势整固", "safe"
+        elif s > 35 and bd < 45:
+            phase_code, phase, phase_class = "C", "牛市回调", "safe"
+        elif s > 25 and bd < 35:
+            phase_code, phase, phase_class = "D", "修复中", "safe"
+        elif s > 20 and bd < 50:
+            phase_code, phase, phase_class = "E", "震荡整理", "caution"
+        elif s < 20 and bd < 40:
+            phase_code, phase, phase_class = "F", "弱势未崩", "caution"
+        elif s < 30 and bd > 50:
+            phase_code, phase, phase_class = "G", "宽度承压", "panic"
+        else:
+            phase_code, phase, phase_class = "H", "恐慌出清", "panic"
+
+    if mid is None:
+        ntss_state, ntss_class = "UNKNOWN", "wait"
+    elif mid < 0:
+        ntss_state, ntss_class = "PANIC", "panic"
+    elif mid < 2:
+        ntss_state, ntss_class = "CAUTION", "caution"
+    else:
+        ntss_state, ntss_class = "SAFE", "safe"
+
+    signal = "watch"
+    short_type: str | None = None
+    label = "观察"
+    action = "等待 MVS 多头或 Gap Short 触发。"
+    if bd is not None and bd < 35:
+        signal = "long"
+        label = "多头窗口"
+        action = "多头优先：使用 ADV Top10 → MA200 Top3。"
+    elif (mid is not None and mid < 0) or phase_code in {"G", "H"}:
+        signal = "short"
+        short_type = "Risk Off"
+        label = "空头保险"
+        action = "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"
+    elif bd is not None and bd >= 35:
+        signal = "short_watch"
+        short_type = "Trail Exhaustion"
+        label = "空头雷达"
+        action = "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"
+
+    return {"signal": signal, "label": label, "phase_code": phase_code, "phase": phase,
+            "phase_class": phase_class, "short_type": short_type, "ntss_state": ntss_state,
+            "ntss_class": ntss_class, "strong": s, "breakdown": bd, "ntss": mid,
+            "momentum": mom, "action": action,
+            "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic"}
+
+
+def current_market_status() -> dict[str, Any]:
+    breadth = cache_get("breadth", ttl_minutes=120)
+    records = breadth.get("records", []) if isinstance(breadth, dict) else []
+    status = classify_market_status(records[-1] if records else None)
+    if isinstance(breadth, dict):
+        status["generated_at"] = breadth.get("generated_at")
+    return status
 
 
 # ── Breadth: calculation ──────────────────────────────────────────────────────
@@ -456,6 +542,7 @@ def api_signals() -> JSONResponse:
     try:
         return JSONResponse({
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "market_status": current_market_status(),
             "nasdaq100": compute_signals("nasdaq100"),
             "sp500":     compute_signals("sp500"),
         })
@@ -470,6 +557,7 @@ def api_signal(universe: str) -> JSONResponse:
     try:
         payload = compute_signals(universe)
         payload["generated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        payload["market_status"] = current_market_status()
         return JSONResponse(payload)
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -518,7 +606,7 @@ _NAV = r"""
   .nav-link.active { color:#58a6ff; border-bottom-color:#58a6ff; }
 </style>
 <nav class="nav-bar">
-  <a id="nav-signals" class="nav-link" href="/">选股信号</a>
+  <a id="nav-signals" class="nav-link" href="/">Market Vital Sign</a>
   <a id="nav-breadth" class="nav-link" href="/breadth">市场宽度</a>
 </nav>
 <script>
@@ -535,7 +623,7 @@ SIGNALS_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>VIX × Breadth 选股信号</title>
+  <title>Market Vital Sign</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -580,6 +668,31 @@ SIGNALS_HTML = r"""<!doctype html>
     .sec-meta  { font-size: 11px; color: #8b949e; }
 
     .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .cards.three { grid-template-columns: 1fr 1fr 1fr; }
+
+    .status-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 13px 15px;
+      display: grid;
+      grid-template-columns: 1.1fr 1.6fr;
+      gap: 12px;
+      align-items: center;
+    }
+    .status-main { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+    .badge {
+      display: inline-flex; align-items: center;
+      border-radius: 999px; padding: 3px 10px;
+      font-size: 11px; font-weight: 800;
+      border: 1px solid #30363d;
+    }
+    .badge.safe { color: #3fb950; border-color: #238636; background: rgba(46,160,67,.12); }
+    .badge.caution { color: #d29922; border-color: #9e6a03; background: rgba(187,128,9,.12); }
+    .badge.panic { color: #f85149; border-color: #da3633; background: rgba(248,81,73,.10); }
+    .badge.wait { color: #8b949e; background: #21262d; }
+    .status-title { font-size: 14px; font-weight: 800; }
+    .status-detail { color: #8b949e; font-size: 12px; line-height: 1.45; }
 
     .card {
       background: #161b22;
@@ -594,9 +707,11 @@ SIGNALS_HTML = r"""<!doctype html>
     }
     .card-hd.stable { border-left: 3px solid #3fb950; }
     .card-hd.offens { border-left: 3px solid #d29922; }
+    .card-hd.short  { border-left: 3px solid #f85149; }
     .card-title { font-size: 13px; font-weight: 700; }
     .card-title.stable { color: #3fb950; }
     .card-title.offens { color: #d29922; }
+    .card-title.short  { color: #f85149; }
     .card-perf { font-size: 11px; color: #484f58; }
     .card-note {
       padding: 7px 15px;
@@ -634,13 +749,15 @@ SIGNALS_HTML = r"""<!doctype html>
     .rk.s-hi  { background: #3fb950; color: #0d1117; }
     .rk.s-lo  { background: #21262d; color: #8b949e; }
     .rk.o-hi  { background: #d29922; color: #0d1117; }
+    .rk.x-hi  { background: #f85149; color: #0d1117; }
     .pos { color: #3fb950; font-weight: 600; font-variant-numeric: tabular-nums; }
     .neg { color: #f85149; font-weight: 600; font-variant-numeric: tabular-nums; }
     .na  { color: #484f58; }
     .num { color: #c9d1d9; font-variant-numeric: tabular-nums; }
 
     @media (max-width: 760px) {
-      .cards  { grid-template-columns: 1fr; }
+      .cards, .cards.three  { grid-template-columns: 1fr; }
+      .status-panel { grid-template-columns: 1fr; }
       header  { flex-direction: column; align-items: flex-start; }
       main    { padding: 12px; gap: 20px; }
     }
@@ -649,7 +766,7 @@ SIGNALS_HTML = r"""<!doctype html>
 <body>
 <header>
   <div>
-    <div class="hd-title">VIX × Breadth 选股信号</div>
+    <div class="hd-title">Market Vital Sign</div>
     <div class="hd-sub">信号激活时参考 · 数据来自 Yahoo Finance</div>
   </div>
   <div class="hd-right">
@@ -659,12 +776,19 @@ SIGNALS_HTML = r"""<!doctype html>
 </header>
 """ + _NAV + r"""
 <main>
+  <div class="status-panel">
+    <div class="status-main">
+      <span class="badge wait" id="signalBadge">状态加载中</span>
+      <span class="status-title" id="statusTitle">等待市场宽度数据</span>
+    </div>
+    <div class="status-detail" id="statusDetail">正在读取最新 Strong / Breakdown / NTSS。</div>
+  </div>
   <div>
     <div class="sec-hd">
       <span class="sec-title">NASDAQ 100 / QQQ</span>
       <span class="sec-meta" id="nasdaqMeta">—</span>
     </div>
-    <div class="cards">
+    <div class="cards three">
       <div class="card">
         <div class="card-hd stable">
           <span class="card-title stable">稳健核心 · ADV Top5</span>
@@ -689,6 +813,18 @@ SIGNALS_HTML = r"""<!doctype html>
         </table>
         <div class="card-note">ADV Top10 中选距 MA200 最远的 3 只 · 动量最强但回撤更大</div>
       </div>
+      <div class="card">
+        <div class="card-hd short">
+          <span class="card-title short">空头保险 · QQQ 70% + 弱股 30%</span>
+          <span class="card-perf" id="nasdaqShortType">Gap Short</span>
+        </div>
+        <div class="msg-row" id="nasdaqShortMsg">正在加载…</div>
+        <table id="nasdaqShortTbl" style="display:none">
+          <thead><tr><th>标的</th><th>权重</th><th>收盘价</th><th>MA200</th><th>距 MA200 ↓</th></tr></thead>
+          <tbody id="nasdaqShortBody"></tbody>
+        </table>
+        <div class="card-note">仅在空仓期满足 Gap Short 时参考 · 弱股来自 ADV Top30 中 MA200 最弱 Top1</div>
+      </div>
     </div>
   </div>
   <div>
@@ -696,7 +832,7 @@ SIGNALS_HTML = r"""<!doctype html>
       <span class="sec-title">S&amp;P 500 / SPY</span>
       <span class="sec-meta" id="sp500Meta">—</span>
     </div>
-    <div class="cards">
+    <div class="cards three">
       <div class="card">
         <div class="card-hd stable">
           <span class="card-title stable">稳健核心 · ADV Top5</span>
@@ -720,6 +856,18 @@ SIGNALS_HTML = r"""<!doctype html>
           <tbody id="sp500MaBody"></tbody>
         </table>
         <div class="card-note">ADV Top10 池内按 MA200 距离排序，取前 3</div>
+      </div>
+      <div class="card">
+        <div class="card-hd short">
+          <span class="card-title short">空头保险 · SPY 70% + 弱股 30%</span>
+          <span class="card-perf" id="sp500ShortType">Gap Short</span>
+        </div>
+        <div class="msg-row" id="sp500ShortMsg">正在加载…</div>
+        <table id="sp500ShortTbl" style="display:none">
+          <thead><tr><th>标的</th><th>权重</th><th>收盘价</th><th>MA200</th><th>距 MA200 ↓</th></tr></thead>
+          <tbody id="sp500ShortBody"></tbody>
+        </table>
+        <div class="card-note">仅在空仓期满足 Gap Short 时参考 · 弱股来自 ADV Top30 中 MA200 最弱 Top1</div>
       </div>
     </div>
   </div>
@@ -762,30 +910,77 @@ SIGNALS_HTML = r"""<!doctype html>
       + "<td class='num'>" + money(r.adv63) + "</td>"
       + "</tr>";
   }
+  function shortRows(data) {
+    const rows = [];
+    rows.push("<tr>"
+      + "<td><span class='sym'>" + data.short_proxy + "</span></td>"
+      + "<td><span class='rk x-hi'>" + data.short_allocation.proxy_pct + "%</span></td>"
+      + "<td class='na'>指数</td><td class='na'>—</td><td class='na'>—</td>"
+      + "</tr>");
+    data.short_selected.forEach(r => {
+      const ma = r.ma200 != null
+        ? "<span class='num'>$" + P2.format(r.ma200) + "</span>"
+        : '<span class="na">N/A</span>';
+      rows.push("<tr>"
+        + "<td><span class='sym'>" + r.symbol + "</span></td>"
+        + "<td><span class='rk x-hi'>" + data.short_allocation.weak_stock_pct + "%</span></td>"
+        + "<td class='num'>$" + P2.format(r.close) + "</td>"
+        + "<td>" + ma + "</td>"
+        + "<td>" + distCell(r.distance_pct) + "</td>"
+        + "</tr>");
+    });
+    return rows.join("");
+  }
   function show(tblId, msgId, rows, renderFn) {
     document.getElementById(tblId.replace("Tbl","Body")).innerHTML = rows.map(renderFn).join("");
     document.getElementById(msgId).style.display = "none";
     document.getElementById(tblId).style.display = "";
   }
+  function showShort(prefix, data, status) {
+    document.getElementById(prefix+"ShortBody").innerHTML = shortRows(data);
+    document.getElementById(prefix+"ShortMsg").style.display = "none";
+    document.getElementById(prefix+"ShortTbl").style.display = "";
+    document.getElementById(prefix+"ShortType").textContent =
+      status && status.short_type ? status.short_type : "Gap Short";
+  }
   function renderUniverse(data, prefix) {
     show(prefix+"AdvTbl", prefix+"AdvMsg", data.adv_selected,  advRow);
     show(prefix+"MaTbl",  prefix+"MaMsg",  data.ma200_selected, maRow);
+    showShort(prefix, data, window.MARKET_STATUS);
     document.getElementById(prefix+"Meta").textContent =
       "截至 " + data.as_of + " · " + data.valid_count + "/" + data.universe_count + " 有效";
   }
+  function renderMarketStatus(status) {
+    window.MARKET_STATUS = status || {};
+    const badge = document.getElementById("signalBadge");
+    const title = document.getElementById("statusTitle");
+    const detail = document.getElementById("statusDetail");
+    const cls = status.phase_class || "wait";
+    badge.className = "badge " + cls;
+    badge.textContent = status.label || "状态未知";
+    title.textContent = (status.phase_code ? status.phase_code + " · " : "") + (status.phase || "等待宽度数据");
+    const bits = [];
+    if (status.strong != null) bits.push("Strong " + P1.format(status.strong) + "%");
+    if (status.breakdown != null) bits.push("BD " + P1.format(status.breakdown) + "%");
+    if (status.ntss != null) bits.push("NTSS " + P2.format(status.ntss));
+    if (status.ntss_state) bits.push(status.ntss_state);
+    detail.textContent = bits.join(" · ") + (bits.length ? " · " : "") + (status.action || status.basis || "");
+  }
   function setLoading() {
+    renderMarketStatus({label:"状态加载中", phase:"等待市场宽度数据", phase_class:"wait",
+                        action:"正在读取最新 Strong / Breakdown / NTSS。"});
     ["nasdaq","sp500"].forEach(p => {
-      ["AdvMsg","MaMsg"].forEach(s => {
+      ["AdvMsg","MaMsg","ShortMsg"].forEach(s => {
         const el = document.getElementById(p+s);
         el.textContent = "正在抓取并计算…"; el.className = "msg-row"; el.style.display = "";
       });
-      ["AdvTbl","MaTbl"].forEach(s => { document.getElementById(p+s).style.display = "none"; });
+      ["AdvTbl","MaTbl","ShortTbl"].forEach(s => { document.getElementById(p+s).style.display = "none"; });
       document.getElementById(p+"Meta").textContent = "—";
     });
   }
   function setError(msg) {
     ["nasdaq","sp500"].forEach(p =>
-      ["AdvMsg","MaMsg"].forEach(s => {
+      ["AdvMsg","MaMsg","ShortMsg"].forEach(s => {
         const el = document.getElementById(p+s);
         el.textContent = "错误: " + msg; el.className = "msg-row err";
       })
@@ -799,6 +994,7 @@ SIGNALS_HTML = r"""<!doctype html>
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "请求失败");
       document.getElementById("clock").textContent = data.generated_at.replace("T"," ");
+      renderMarketStatus(data.market_status);
       renderUniverse(data.nasdaq100, "nasdaq");
       renderUniverse(data.sp500,     "sp500");
     } catch(err) { setError(err.message); }
@@ -817,7 +1013,7 @@ BREADTH_HTML = r"""<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Breadth Monitor — VIX & Area Cross 2D</title>
+  <title>Market Vital Sign — Breadth Monitor</title>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -869,7 +1065,7 @@ BREADTH_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>VIX &amp; Area Cross 2D — Breadth Monitor</h1>
+  <h1>Market Vital Sign — Breadth Monitor</h1>
   <span style="font-size:11px;color:#8b949e">S&amp;P 500 · Hourly · yfinance</span>
   <div class="header-meta">
     Generated: <span id="genTime">—</span> &nbsp;|&nbsp; <span id="nStocks">—</span> stocks
@@ -891,7 +1087,7 @@ BREADTH_HTML = r"""<!DOCTYPE html>
     <div class="dlt gray" id="dBD">—</div>
   </div>
   <div class="card">
-    <div class="lbl">3M–30D (Mid)</div>
+    <div class="lbl">NTSS</div>
     <div class="val blue" id="vMid">—</div>
     <div class="dlt gray" id="dMid">—</div>
   </div>
@@ -1123,7 +1319,7 @@ function makeTraces(recs) {
      line:{color:"#58a6ff",width:1.5},hovertemplate:"<b>>50d</b>: %{y:.1f}%<extra></extra>"},
     {x:T,y:A200,name:">200d MA",   xaxis:"x",yaxis:"y2", type:"scatter",mode:"lines",
      line:{color:"#3fb950",width:1.5},hovertemplate:"<b>>200d</b>: %{y:.1f}%<extra></extra>"},
-    {x:T,y:MID,name:"3M-30D(Mid)", xaxis:"x",yaxis:"y3", type:"bar",marker:{color:midColors},
+    {x:T,y:MID,name:"NTSS", xaxis:"x",yaxis:"y3", type:"bar",marker:{color:midColors},
      hovertemplate:"<b>3M-30D</b>: %{y:.2f}<extra></extra>"},
     {x:T,y:MOM,name:"Momentum",    xaxis:"x",yaxis:"y4", type:"bar",marker:{color:momColors},
      hovertemplate:"<b>Mom</b>: %{y:.2f}<extra></extra>"},
@@ -1168,7 +1364,7 @@ function makeLayout(recs) {
     annotations:[
       lbl("y",  "Strong / Breakdown %"),
       lbl("y2", "% above 20d / 50d / 200d daily MA"),
-      lbl("y3", "3M–30D Mid  [VIX3M−VIX]"),
+      lbl("y3", "NTSS  [VIX3M−VIX]"),
       lbl("y4", "Net Momentum"),
       rlbl("y",35,"35"),rlbl("y",50,"50"),
       rlbl("y2",35,"35"),rlbl("y2",50,"50"),

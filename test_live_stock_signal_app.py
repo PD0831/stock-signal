@@ -77,5 +77,57 @@ class DownloadBatchingTests(unittest.TestCase):
         self.assertEqual(hourly.shape[1], len(symbols))
 
 
+class SignalSelectionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        app._memory_cache.clear()
+
+    def _daily_frame(self, close: float, volume: float, days: int = 210) -> pd.DataFrame:
+        idx = pd.date_range("2025-01-01", periods=days)
+        return pd.DataFrame({"Close": close, "Volume": volume}, index=idx)
+
+    def _weak_daily_frame(self, last_close: float, volume: float, days: int = 210) -> pd.DataFrame:
+        idx = pd.date_range("2025-01-01", periods=days)
+        closes = [100.0] * (days - 1) + [last_close]
+        return pd.DataFrame({"Close": closes, "Volume": volume}, index=idx)
+
+    def test_compute_signals_includes_short_pick_from_adv_top30_weakest_ma200(self) -> None:
+        symbols = [f"S{i:02d}" for i in range(35)]
+        history = {
+            symbol: self._daily_frame(close=100.0 + idx, volume=1_000_000.0 - idx * 1_000.0)
+            for idx, symbol in enumerate(symbols)
+        }
+        history["S29"] = self._weak_daily_frame(last_close=70.0, volume=2_000_000.0)
+        history["S30"] = self._weak_daily_frame(last_close=10.0, volume=100.0)
+
+        with (
+            patch.object(app, "fetch_current_symbols", return_value=symbols),
+            patch.object(app, "fetch_history", return_value=history),
+        ):
+            result = app.compute_signals("nasdaq100")
+
+        self.assertEqual(result["short_proxy"], "QQQ")
+        self.assertEqual(result["short_allocation"], {"proxy_pct": 70, "weak_stock_pct": 30})
+        self.assertEqual(len(result["short_selected"]), 1)
+        self.assertEqual(result["short_selected"][0]["symbol"], "S29")
+        self.assertEqual(result["short_selected"][0]["rank"], 1)
+
+
+class MarketStatusTests(unittest.TestCase):
+    def test_breadth_status_uses_app_ntss_direction(self) -> None:
+        status = app.classify_market_status({"s": 18.0, "bd": 58.0, "mid": -1.2, "mom": -0.5})
+
+        self.assertEqual(status["signal"], "short")
+        self.assertEqual(status["short_type"], "Risk Off")
+        self.assertEqual(status["ntss_state"], "PANIC")
+        self.assertIn("VIX3M - VIX", status["basis"])
+
+    def test_breadth_status_marks_long_when_breakdown_below_35(self) -> None:
+        status = app.classify_market_status({"s": 42.0, "bd": 28.0, "mid": 2.5, "mom": 0.4})
+
+        self.assertEqual(status["signal"], "long")
+        self.assertEqual(status["short_type"], None)
+        self.assertEqual(status["phase_code"], "B")
+
+
 if __name__ == "__main__":
     unittest.main()
