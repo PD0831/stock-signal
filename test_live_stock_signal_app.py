@@ -130,6 +130,16 @@ class MarketStatusTests(unittest.TestCase):
 
 
 class BreadthReferenceTests(unittest.TestCase):
+    def test_format_breadth_bar_time_shows_half_hour_bar_end(self) -> None:
+        ts = pd.Timestamp("2026-06-01 15:30", tz="America/New_York")
+
+        self.assertEqual(app.format_breadth_bar_time(ts), "2026-06-01 16:00")
+
+    def test_format_breadth_bar_time_leaves_full_hour_unchanged(self) -> None:
+        ts = pd.Timestamp("2026-06-01 14:00", tz="America/New_York")
+
+        self.assertEqual(app.format_breadth_bar_time(ts), "2026-06-01 14:00")
+
     def test_previous_day_close_record_uses_last_record_from_prior_day(self) -> None:
         records = [
             {"t": "2026-05-29 15:00", "s": 30.0},
@@ -149,6 +159,24 @@ class BreadthReferenceTests(unittest.TestCase):
         ]
 
         self.assertIsNone(app.previous_day_close_record(records))
+
+    def test_daily_close_payload_waits_for_same_day_ntss(self) -> None:
+        idx = pd.date_range("2025-06-02", periods=220, freq="B")
+        daily = pd.DataFrame({
+            "AAA": range(100, 100 + len(idx)),
+            "BBB": range(200, 200 + len(idx)),
+        }, index=idx)
+        ntss = pd.Series(
+            [2.0] * (len(idx) - 1),
+            index=idx[:-1],
+            name="ntss",
+        )
+
+        payload = app.daily_close_payload(daily, ntss, min_n=1)
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["current"]["t"], f"{idx[-2]:%Y-%m-%d} EOD")
+        self.assertEqual(payload["previous"]["t"], f"{idx[-3]:%Y-%m-%d} EOD")
 
 
 if __name__ == "__main__":

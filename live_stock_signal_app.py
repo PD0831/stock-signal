@@ -378,9 +378,12 @@ def classify_market_status(record: dict[str, Any] | None) -> dict[str, Any]:
 def current_market_status() -> dict[str, Any]:
     breadth = cache_get("breadth", ttl_minutes=120)
     records = breadth.get("records", []) if isinstance(breadth, dict) else []
-    status = classify_market_status(records[-1] if records else None)
+    daily_close = breadth.get("daily_close") if isinstance(breadth, dict) else None
+    daily_record = daily_close.get("current") if isinstance(daily_close, dict) else None
+    status = classify_market_status(daily_record or (records[-1] if records else None))
     if isinstance(breadth, dict):
         status["generated_at"] = breadth.get("generated_at")
+        status["source"] = "daily_close" if daily_record else "hourly"
     return status
 
 
@@ -395,6 +398,12 @@ def previous_day_close_record(records: list[dict[str, Any]]) -> dict[str, Any] |
         if record_day and record_day < current_day:
             return record
     return None
+
+
+def format_breadth_bar_time(ts: pd.Timestamp) -> str:
+    if ts.minute == 30:
+        ts = ts + pd.Timedelta(minutes=30)
+    return ts.strftime("%Y-%m-%d %H:%M")
 
 
 # ── Breadth: calculation ──────────────────────────────────────────────────────
@@ -424,6 +433,28 @@ def _pct_above(hourly_prices: pd.DataFrame, ref: pd.DataFrame, min_n: int) -> pd
     pct = above.sum(axis=1).astype(float) / n_valid.clip(lower=1) * 100
     pct[n_valid < min_n] = np.nan
     return pct
+
+
+def _calculate_breadth_from_daily(daily: pd.DataFrame, min_n: int = BREADTH_MIN_STOCKS) -> pd.DataFrame:
+    ma20_ts  = daily.rolling(20,  min_periods=15).mean()
+    ma50_ts  = daily.rolling(50,  min_periods=40).mean()
+    ma200_ts = daily.rolling(200, min_periods=150).mean()
+    above_20  = _pct_above(daily, ma20_ts,  min_n)
+    above_50  = _pct_above(daily, ma50_ts,  min_n)
+    above_200 = _pct_above(daily, ma200_ts, min_n)
+    m  = pd.concat([above_20, above_50, above_200], axis=1)
+    m2 = pd.concat([above_20, above_50], axis=1)
+    out = pd.DataFrame({
+        "above_20":  above_20.round(2),
+        "above_50":  above_50.round(2),
+        "above_200": above_200.round(2),
+        "strong":    m.min(axis=1).round(2),
+        "breakdown": (100 - m.max(axis=1)).round(2),
+        "pullback":  (m2.min(axis=1) - m.min(axis=1)).round(2),
+        "recovery":  (m.max(axis=1) - m2.max(axis=1)).round(2),
+    }, index=daily.index)
+    out["momentum"] = _calc_momentum(out).values
+    return out
 
 
 def _calculate_breadth(daily: pd.DataFrame, hourly: pd.DataFrame) -> pd.DataFrame:
@@ -468,6 +499,73 @@ def _calc_ntss(vix_df: pd.DataFrame, idx: pd.DatetimeIndex) -> pd.Series:
     return ntss.reindex(idx, method="nearest", tolerance=pd.Timedelta("90min"))
 
 
+def _download_daily_ntss() -> pd.Series:
+    frames: dict[str, pd.Series] = {}
+    for ticker, key in [("^VIX", "vix"), ("^VIX3M", "vix3m")]:
+        try:
+            hist = yf.Ticker(ticker).history(period=BREADTH_PERIOD, interval="1d")
+            if not hist.empty:
+                series = hist["Close"].rename(key)
+                idx = pd.DatetimeIndex(series.index)
+                if idx.tz is not None:
+                    idx = idx.tz_convert("America/New_York").tz_localize(None)
+                series.index = pd.DatetimeIndex(idx).normalize()
+                frames[key] = series
+        except Exception:
+            pass
+    if len(frames) < 2:
+        return pd.Series(dtype="float64")
+    vix_df = pd.concat(frames.values(), axis=1).sort_index()
+    return (vix_df["vix3m"].ffill() - vix_df["vix"].ffill()).round(3)
+
+
+def _record_from_breadth_row(ts: Any, row: pd.Series, label: str | None = None) -> dict[str, Any]:
+    def v(x: Any) -> float | None:
+        return None if pd.isna(x) else round(float(x), 2)
+    if label is None:
+        if isinstance(ts, pd.Timestamp):
+            label = ts.strftime("%Y-%m-%d")
+        else:
+            label = str(ts)
+    return {"t": label,
+            "s":    v(row["strong"]),    "bd":   v(row["breakdown"]),
+            "pb":   v(row["pullback"]),  "rc":   v(row["recovery"]),
+            "mid":  v(row.get("ntss")),  "mom":  v(row.get("momentum")),
+            "a20":  v(row.get("above_20")),
+            "a50":  v(row.get("above_50")),
+            "a200": v(row.get("above_200"))}
+
+
+def daily_close_payload(
+    daily_df: pd.DataFrame,
+    ntss: pd.Series | None = None,
+    min_n: int = BREADTH_MIN_STOCKS,
+) -> dict[str, Any] | None:
+    daily_breadth = _calculate_breadth_from_daily(daily_df, min_n=min_n)
+    if ntss is not None and not ntss.empty:
+        idx = pd.DatetimeIndex(daily_breadth.index)
+        if idx.tz is not None:
+            idx = idx.tz_convert("America/New_York").tz_localize(None)
+        daily_breadth.index = pd.DatetimeIndex(idx).normalize()
+        ntss = ntss.dropna().sort_index()
+        if ntss.empty:
+            return None
+        latest_ntss_day = ntss.index[-1]
+        daily_breadth = daily_breadth.loc[daily_breadth.index <= latest_ntss_day]
+        daily_breadth["ntss"] = ntss.reindex(daily_breadth.index, method="ffill").values
+    valid = daily_breadth.dropna(subset=["strong", "breakdown"], how="any")
+    if valid.empty:
+        return None
+    current = valid.iloc[-1]
+    previous = valid.iloc[-2] if len(valid) >= 2 else None
+    current_ts = valid.index[-1]
+    previous_ts = valid.index[-2] if previous is not None else None
+    payload = {"current": _record_from_breadth_row(current_ts, current, f"{current_ts:%Y-%m-%d} EOD")}
+    if previous is not None and previous_ts is not None:
+        payload["previous"] = _record_from_breadth_row(previous_ts, previous, f"{previous_ts:%Y-%m-%d} EOD")
+    return payload
+
+
 def compute_breadth_data() -> dict:
     print("[breadth] starting computation…")
     symbols    = fetch_current_symbols("sp500")
@@ -486,6 +584,7 @@ def compute_breadth_data() -> dict:
         hourly_df.index = hourly_df.index.tz_localize("UTC")
 
     breadth = _calculate_breadth(daily_df, hourly_df)
+    daily_close = daily_close_payload(daily_df, _download_daily_ntss())
 
     # VIX
     vix_frames: dict[str, pd.Series] = {}
@@ -511,7 +610,7 @@ def compute_breadth_data() -> dict:
         return None if pd.isna(x) else round(float(x), 2)
 
     records = [
-        {"t":    idx_et[i].strftime("%Y-%m-%d %H:%M"),
+        {"t":    format_breadth_bar_time(idx_et[i]),
          "s":    v(row["strong"]),    "bd":   v(row["breakdown"]),
          "pb":   v(row["pullback"]),  "rc":   v(row["recovery"]),
          "mid":  v(row["ntss"]),      "mom":  v(row["momentum"]),
@@ -523,6 +622,7 @@ def compute_breadth_data() -> dict:
     print(f"[breadth] done — {len(records)} bars")
     return {"generated_at": datetime.now().isoformat(timespec="seconds"),
             "timeframe": "1H", "n_stocks": daily_df.shape[1],
+            "daily_close": daily_close,
             "previous_day_close": previous_day_close_record(records),
             "records": records}
 
@@ -1202,9 +1302,11 @@ function updateStatus() {
   const recs = DATA.records;
   const n    = recs.length - 1;
   if (n < 1) return;
-  const cur  = recs[n];
-  const prev = DATA.previous_day_close || recs[n-1];
-  const deltaLabel = DATA.previous_day_close ? " vs prior day close" : " vs prev";
+  const daily = DATA.daily_close || {};
+  const usingDaily = !!daily.current;
+  const cur  = usingDaily ? daily.current : recs[n];
+  const prev = usingDaily ? daily.previous : (DATA.previous_day_close || recs[n-1]);
+  const deltaLabel = usingDaily ? " vs prior daily close" : (DATA.previous_day_close ? " vs prior day close" : " vs prev");
   const fmt  = (v, d) => v != null ? v.toFixed(d==null?1:d) : "—";
   const sgn  = v => v > 0 ? "+" : "";
 
@@ -1235,6 +1337,11 @@ function updateStatus() {
   const ok = cur.bd!=null && cur.bd<35;
   tr.textContent = ok ? "BL=35 ✓ ALLOW" : "BL=35 ✗ WAIT";
   tr.className   = "badge " + (ok ? "allow" : "wait");
+
+  const lastBar = document.getElementById("lastBar");
+  if (lastBar) {
+    lastBar.textContent = usingDaily ? "Daily close: " + cur.t : "Last: " + cur.t + " ET";
+  }
 
   // ── Market phase (Strong × BD) ───────────────────────────────────────────
   const ph = document.getElementById("phaseTag");
@@ -1273,8 +1380,6 @@ function updateStatus() {
       sg.style.display = "none";
     }
   }
-
-  document.getElementById("lastBar").textContent = "Last: " + cur.t + " ET";
 }
 
 // ── Data slice ────────────────────────────────────────────────────────────────
