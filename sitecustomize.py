@@ -1,12 +1,11 @@
 """Runtime patches for the live breadth app.
 
 Python imports this module automatically during interpreter startup when the
-repository root is on sys.path. The patch keeps market breadth on the formal
-S&P 500 constituent-security ticker denominator, with GOOG and GOOGL counted
+repository root is on sys.path. The patch keeps market breadth on the SPY
+holdings constituent-security ticker denominator, with GOOG and GOOGL counted
 separately.
 
-Breadth uses regular Close prices, not dividend-adjusted prices. That matches
-standard chart/SMA breadth checks such as "270 of 505 above the 200-day MA".
+Breadth uses regular Close prices, not dividend-adjusted prices.
 """
 from __future__ import annotations
 
@@ -17,6 +16,33 @@ from datetime import datetime
 from typing import Any
 
 BREADTH_DAILY_PERIOD = "2y"
+
+
+def _load_spy_universe(app: Any) -> tuple[list[str], dict[str, Any]]:
+    try:
+        from scripts.spy_universe import download_spy_universe
+    except ModuleNotFoundError:
+        from spy_universe import download_spy_universe
+
+    try:
+        universe = download_spy_universe()
+        diagnostics = {
+            "universe_source": "spdr_spy_holdings_xlsx",
+            "spy_holdings_as_of": universe.as_of,
+            "spy_raw_holding_rows": universe.raw_holding_rows,
+            "spy_excluded_rows": universe.excluded_rows,
+            "spy_excluded_count": universe.excluded_count,
+        }
+        return universe.symbols, diagnostics
+    except Exception as exc:
+        symbols = app.fetch_current_symbols("sp500")
+        return symbols, {
+            "universe_source": "fallback_sp500_wikipedia",
+            "universe_error": str(exc),
+            "spy_raw_holding_rows": None,
+            "spy_excluded_rows": [],
+            "spy_excluded_count": None,
+        }
 
 
 def _install_breadth_patch(app: Any) -> None:
@@ -44,6 +70,9 @@ def _install_breadth_patch(app: Any) -> None:
         counts[n_valid < min_n] = np.nan
         return counts
 
+    def valid_count(prices, ref) -> Any:
+        return (prices.notna() & ref.notna()).sum(axis=1).astype(float)
+
     def calculate_breadth_from_daily(daily, min_n: int = app.BREADTH_MIN_STOCKS, denominator: int | None = None):
         ma20_ts = daily.rolling(20, min_periods=20).mean()
         ma50_ts = daily.rolling(50, min_periods=50).mean()
@@ -51,24 +80,18 @@ def _install_breadth_patch(app: Any) -> None:
         above_20 = pct_above(daily, ma20_ts, min_n, denominator=denominator)
         above_50 = pct_above(daily, ma50_ts, min_n, denominator=denominator)
         above_200 = pct_above(daily, ma200_ts, min_n, denominator=denominator)
-        above_20_n = count_above(daily, ma20_ts, min_n)
-        above_50_n = count_above(daily, ma50_ts, min_n)
-        above_200_n = count_above(daily, ma200_ts, min_n)
-        valid_20_n = (daily.notna() & ma20_ts.notna()).sum(axis=1).astype(float)
-        valid_50_n = (daily.notna() & ma50_ts.notna()).sum(axis=1).astype(float)
-        valid_200_n = (daily.notna() & ma200_ts.notna()).sum(axis=1).astype(float)
         m = pd.concat([above_20, above_50, above_200], axis=1)
         m2 = pd.concat([above_20, above_50], axis=1)
         out = pd.DataFrame({
             "above_20": above_20.round(2),
             "above_50": above_50.round(2),
             "above_200": above_200.round(2),
-            "above_20_n": above_20_n,
-            "above_50_n": above_50_n,
-            "above_200_n": above_200_n,
-            "valid_20_n": valid_20_n,
-            "valid_50_n": valid_50_n,
-            "valid_200_n": valid_200_n,
+            "above_20_n": count_above(daily, ma20_ts, min_n),
+            "above_50_n": count_above(daily, ma50_ts, min_n),
+            "above_200_n": count_above(daily, ma200_ts, min_n),
+            "valid_20_n": valid_count(daily, ma20_ts),
+            "valid_50_n": valid_count(daily, ma50_ts),
+            "valid_200_n": valid_count(daily, ma200_ts),
             "strong": m.min(axis=1).round(2),
             "breakdown": (100 - m.max(axis=1)).round(2),
             "pullback": (m2.min(axis=1) - m.min(axis=1)).round(2),
@@ -86,30 +109,18 @@ def _install_breadth_patch(app: Any) -> None:
         ma50_ref = app._daily_to_hourly_ref(ma50_ts, hourly.index)
         ma200_ref = app._daily_to_hourly_ref(ma200_ts, hourly.index)
         h = hourly[common]
-        above_20 = app._ema(
-            pct_above(h, ma20_ref[common], app.BREADTH_MIN_STOCKS, denominator=denominator),
-            app.BREADTH_SMOOTH,
-        )
-        above_50 = app._ema(
-            pct_above(h, ma50_ref[common], app.BREADTH_MIN_STOCKS, denominator=denominator),
-            app.BREADTH_SMOOTH,
-        )
-        above_200 = app._ema(
-            pct_above(h, ma200_ref[common], app.BREADTH_MIN_STOCKS, denominator=denominator),
-            app.BREADTH_SMOOTH,
-        )
-        above_20_n = count_above(h, ma20_ref[common], app.BREADTH_MIN_STOCKS)
-        above_50_n = count_above(h, ma50_ref[common], app.BREADTH_MIN_STOCKS)
-        above_200_n = count_above(h, ma200_ref[common], app.BREADTH_MIN_STOCKS)
+        above_20 = app._ema(pct_above(h, ma20_ref[common], app.BREADTH_MIN_STOCKS, denominator), app.BREADTH_SMOOTH)
+        above_50 = app._ema(pct_above(h, ma50_ref[common], app.BREADTH_MIN_STOCKS, denominator), app.BREADTH_SMOOTH)
+        above_200 = app._ema(pct_above(h, ma200_ref[common], app.BREADTH_MIN_STOCKS, denominator), app.BREADTH_SMOOTH)
         m = pd.concat([above_20, above_50, above_200], axis=1)
         m2 = pd.concat([above_20, above_50], axis=1)
         return pd.DataFrame({
             "above_20": above_20.round(2),
             "above_50": above_50.round(2),
             "above_200": above_200.round(2),
-            "above_20_n": above_20_n,
-            "above_50_n": above_50_n,
-            "above_200_n": above_200_n,
+            "above_20_n": count_above(h, ma20_ref[common], app.BREADTH_MIN_STOCKS),
+            "above_50_n": count_above(h, ma50_ref[common], app.BREADTH_MIN_STOCKS),
+            "above_200_n": count_above(h, ma200_ref[common], app.BREADTH_MIN_STOCKS),
             "strong": m.min(axis=1).round(2),
             "breakdown": (100 - m.max(axis=1)).round(2),
             "pullback": (m2.min(axis=1) - m.min(axis=1)).round(2),
@@ -214,11 +225,7 @@ def _install_breadth_patch(app: Any) -> None:
                 "valid_200_n": n(row.get("valid_200_n"))}
 
     def daily_close_payload(daily_df, ntss=None, min_n: int = app.BREADTH_MIN_STOCKS, universe_denominator: int | None = None):
-        daily_breadth = calculate_breadth_from_daily(
-            daily_df,
-            min_n=min_n,
-            denominator=universe_denominator,
-        )
+        daily_breadth = calculate_breadth_from_daily(daily_df, min_n=min_n, denominator=universe_denominator)
         if ntss is not None and not ntss.empty:
             idx = pd.DatetimeIndex(daily_breadth.index)
             if idx.tz is not None:
@@ -243,8 +250,8 @@ def _install_breadth_patch(app: Any) -> None:
         return payload
 
     def compute_breadth_data():
-        print("[breadth] starting computation with raw Close and fixed ticker denominator...")
-        symbols = app.fetch_current_symbols("sp500")
+        print("[breadth] starting computation with SPY holdings, raw Close, fixed denominator...")
+        symbols, universe_meta = _load_spy_universe(app)
         universe_denominator = len(symbols)
 
         daily_df = download_daily_closes(symbols)
@@ -256,11 +263,7 @@ def _install_breadth_patch(app: Any) -> None:
             hourly_df.index = hourly_df.index.tz_localize("UTC")
 
         breadth = calculate_breadth(daily_df, hourly_df, denominator=universe_denominator)
-        daily_close = daily_close_payload(
-            daily_df,
-            app._download_daily_ntss(),
-            universe_denominator=universe_denominator,
-        )
+        daily_close = daily_close_payload(daily_df, app._download_daily_ntss(), universe_denominator=universe_denominator)
 
         vix_frames = {}
         for ticker, key in [("^VIX", "vix"), ("^VIX3M", "vix3m")]:
@@ -297,7 +300,8 @@ def _install_breadth_patch(app: Any) -> None:
                 "share_class_policy": "GOOG and GOOGL counted separately",
                 "daily_close": daily_close,
                 "previous_day_close": app.previous_day_close_record(records),
-                "records": records}
+                "records": records,
+                **universe_meta}
 
     app._pct_above = pct_above
     app._calculate_breadth_from_daily = calculate_breadth_from_daily
