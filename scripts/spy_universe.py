@@ -54,6 +54,13 @@ def normalize_symbol(value: object) -> str | None:
     return symbol
 
 
+def _excel_col_num(column: str) -> int:
+    number = 0
+    for char in column:
+        number = number * 26 + ord(char) - 64
+    return number
+
+
 def _column_name(cell_ref: str) -> str:
     return "".join(ch for ch in cell_ref if ch.isalpha())
 
@@ -87,8 +94,7 @@ def _cell_value(cell: ET.Element, shared: list[str]) -> str:
 def _worksheet_rows(data: bytes) -> Iterable[list[str]]:
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         shared = _shared_strings(zf)
-        sheet_name = "xl/worksheets/sheet1.xml"
-        root = ET.fromstring(zf.read(sheet_name))
+        root = ET.fromstring(zf.read("xl/worksheets/sheet1.xml"))
         for row in root.findall(".//a:sheetData/a:row", _NS):
             values_by_col = {
                 _column_name(cell.attrib.get("r", "")): _cell_value(cell, shared).strip()
@@ -96,12 +102,10 @@ def _worksheet_rows(data: bytes) -> Iterable[list[str]]:
             }
             if not values_by_col:
                 continue
-            columns = sorted(values_by_col, key=lambda c: sum((ord(ch) - 64) * (26 ** i) for i, ch in enumerate(reversed(c))))
-            max_idx = max(sum((ord(ch) - 64) * (26 ** i) for i, ch in enumerate(reversed(c))) for c in columns)
+            max_idx = max(_excel_col_num(column) for column in values_by_col)
             out = [""] * max_idx
-            for col, value in values_by_col.items():
-                idx = sum((ord(ch) - 64) * (26 ** i) for i, ch in enumerate(reversed(col))) - 1
-                out[idx] = value
+            for column, value in values_by_col.items():
+                out[_excel_col_num(column) - 1] = value
             yield out
 
 
@@ -137,8 +141,9 @@ def parse_spy_holdings_xlsx(data: bytes) -> SpyUniverse:
         name = row[name_idx].strip()
         raw_ticker = row[ticker_idx].strip()
         currency = row[currency_idx].strip() if currency_idx is not None and len(row) > currency_idx else ""
-        if not name and not raw_ticker:
+        if not raw_ticker and not currency:
             continue
+
         raw_holding_rows += 1
         symbol = normalize_symbol(raw_ticker)
         reason = ""
