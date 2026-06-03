@@ -1,17 +1,22 @@
 """Runtime patches for the live breadth app.
 
 Python imports this module automatically during interpreter startup when the
-repository root is on sys.path. The patch keeps breadth percentages on the
-formal S&P 500 constituent-security ticker denominator, with GOOG and GOOGL
-counted separately.
+repository root is on sys.path. The patch keeps market breadth on the formal
+S&P 500 constituent-security ticker denominator, with GOOG and GOOGL counted
+separately.
+
+Breadth uses regular Close prices, not dividend-adjusted prices. That matches
+standard chart/SMA breadth checks such as "270 of 505 above the 200-day MA".
 """
 from __future__ import annotations
 
+import gc
 import importlib.abc
-import importlib.machinery
 import sys
 from datetime import datetime
 from typing import Any
+
+BREADTH_DAILY_PERIOD = "2y"
 
 
 def _install_breadth_patch(app: Any) -> None:
@@ -21,28 +26,49 @@ def _install_breadth_patch(app: Any) -> None:
     pd = app.pd
     np = app.np
 
-    def pct_above(hourly_prices, ref, min_n: int, denominator: int | None = None):
-        valid = hourly_prices.notna() & ref.notna()
-        above = (hourly_prices > ref) & valid
+    def pct_above(prices, ref, min_n: int, denominator: int | None = None):
+        valid = prices.notna() & ref.notna()
+        above = (prices > ref) & valid
         n_valid = valid.sum(axis=1)
-        denom = denominator if denominator and denominator > 0 else hourly_prices.shape[1]
-        pct = above.sum(axis=1).astype(float) / max(denom, 1) * 100
+        n_above = above.sum(axis=1).astype(float)
+        denom = denominator if denominator and denominator > 0 else prices.shape[1]
+        pct = n_above / max(denom, 1) * 100
         pct[n_valid < min_n] = np.nan
         return pct
 
+    def count_above(prices, ref, min_n: int) -> Any:
+        valid = prices.notna() & ref.notna()
+        above = (prices > ref) & valid
+        n_valid = valid.sum(axis=1)
+        counts = above.sum(axis=1).astype(float)
+        counts[n_valid < min_n] = np.nan
+        return counts
+
     def calculate_breadth_from_daily(daily, min_n: int = app.BREADTH_MIN_STOCKS, denominator: int | None = None):
-        ma20_ts = daily.rolling(20, min_periods=15).mean()
-        ma50_ts = daily.rolling(50, min_periods=40).mean()
-        ma200_ts = daily.rolling(200, min_periods=150).mean()
+        ma20_ts = daily.rolling(20, min_periods=20).mean()
+        ma50_ts = daily.rolling(50, min_periods=50).mean()
+        ma200_ts = daily.rolling(200, min_periods=200).mean()
         above_20 = pct_above(daily, ma20_ts, min_n, denominator=denominator)
         above_50 = pct_above(daily, ma50_ts, min_n, denominator=denominator)
         above_200 = pct_above(daily, ma200_ts, min_n, denominator=denominator)
+        above_20_n = count_above(daily, ma20_ts, min_n)
+        above_50_n = count_above(daily, ma50_ts, min_n)
+        above_200_n = count_above(daily, ma200_ts, min_n)
+        valid_20_n = (daily.notna() & ma20_ts.notna()).sum(axis=1).astype(float)
+        valid_50_n = (daily.notna() & ma50_ts.notna()).sum(axis=1).astype(float)
+        valid_200_n = (daily.notna() & ma200_ts.notna()).sum(axis=1).astype(float)
         m = pd.concat([above_20, above_50, above_200], axis=1)
         m2 = pd.concat([above_20, above_50], axis=1)
         out = pd.DataFrame({
             "above_20": above_20.round(2),
             "above_50": above_50.round(2),
             "above_200": above_200.round(2),
+            "above_20_n": above_20_n,
+            "above_50_n": above_50_n,
+            "above_200_n": above_200_n,
+            "valid_20_n": valid_20_n,
+            "valid_50_n": valid_50_n,
+            "valid_200_n": valid_200_n,
             "strong": m.min(axis=1).round(2),
             "breakdown": (100 - m.max(axis=1)).round(2),
             "pullback": (m2.min(axis=1) - m.min(axis=1)).round(2),
@@ -53,9 +79,9 @@ def _install_breadth_patch(app: Any) -> None:
 
     def calculate_breadth(daily, hourly, denominator: int | None = None):
         common = daily.columns.intersection(hourly.columns)
-        ma20_ts = daily[common].rolling(20, min_periods=15).mean()
-        ma50_ts = daily[common].rolling(50, min_periods=40).mean()
-        ma200_ts = daily[common].rolling(200, min_periods=150).mean()
+        ma20_ts = daily[common].rolling(20, min_periods=20).mean()
+        ma50_ts = daily[common].rolling(50, min_periods=50).mean()
+        ma200_ts = daily[common].rolling(200, min_periods=200).mean()
         ma20_ref = app._daily_to_hourly_ref(ma20_ts, hourly.index)
         ma50_ref = app._daily_to_hourly_ref(ma50_ts, hourly.index)
         ma200_ref = app._daily_to_hourly_ref(ma200_ts, hourly.index)
@@ -72,17 +98,120 @@ def _install_breadth_patch(app: Any) -> None:
             pct_above(h, ma200_ref[common], app.BREADTH_MIN_STOCKS, denominator=denominator),
             app.BREADTH_SMOOTH,
         )
+        above_20_n = count_above(h, ma20_ref[common], app.BREADTH_MIN_STOCKS)
+        above_50_n = count_above(h, ma50_ref[common], app.BREADTH_MIN_STOCKS)
+        above_200_n = count_above(h, ma200_ref[common], app.BREADTH_MIN_STOCKS)
         m = pd.concat([above_20, above_50, above_200], axis=1)
         m2 = pd.concat([above_20, above_50], axis=1)
         return pd.DataFrame({
             "above_20": above_20.round(2),
             "above_50": above_50.round(2),
             "above_200": above_200.round(2),
+            "above_20_n": above_20_n,
+            "above_50_n": above_50_n,
+            "above_200_n": above_200_n,
             "strong": m.min(axis=1).round(2),
             "breakdown": (100 - m.max(axis=1)).round(2),
             "pullback": (m2.min(axis=1) - m.min(axis=1)).round(2),
             "recovery": (m.max(axis=1) - m2.max(axis=1)).round(2),
         }, index=hourly.index)
+
+    def close_columns_from_download(frame, symbols: list[str]):
+        if frame.empty:
+            return pd.DataFrame()
+        if not isinstance(frame.columns, pd.MultiIndex):
+            if len(symbols) == 1 and "Close" in frame.columns:
+                return frame[["Close"]].rename(columns={"Close": symbols[0]})
+            return frame
+
+        level0 = {str(x) for x in frame.columns.get_level_values(0)}
+        closes = {}
+        for symbol in symbols:
+            try:
+                if symbol in level0:
+                    sub = frame[symbol]
+                    if "Close" in sub.columns:
+                        closes[symbol] = sub["Close"]
+                else:
+                    sub = frame.xs(symbol, axis=1, level=1)
+                    if "Close" in sub.columns:
+                        closes[symbol] = sub["Close"]
+            except Exception:
+                continue
+        return pd.DataFrame(closes)
+
+    def download_daily_closes(symbols: list[str]):
+        frames = []
+        for i in range(0, len(symbols), app._YF_BATCH_SIZE):
+            batch = symbols[i:i + app._YF_BATCH_SIZE]
+            raw = app.yf.download(
+                batch,
+                period=BREADTH_DAILY_PERIOD,
+                interval="1d",
+                group_by="ticker",
+                auto_adjust=False,
+                progress=False,
+                threads=True,
+            )
+            closes = close_columns_from_download(raw, batch)
+            if not closes.empty:
+                frames.append(closes.astype("float32"))
+            del raw
+            gc.collect()
+        if not frames:
+            return pd.DataFrame()
+        daily = pd.concat(frames, axis=1)
+        daily = daily.loc[:, ~daily.columns.duplicated()]
+        idx = pd.DatetimeIndex(daily.index)
+        if idx.tz is not None:
+            idx = idx.tz_convert("America/New_York").tz_localize(None)
+        daily.index = pd.DatetimeIndex(idx).normalize()
+        return daily.sort_index()
+
+    def download_hourly_closes(symbols: list[str]):
+        frames = []
+        for i in range(0, len(symbols), app._YF_BATCH_SIZE):
+            batch = symbols[i:i + app._YF_BATCH_SIZE]
+            raw = app.yf.download(
+                batch,
+                period=app.BREADTH_PERIOD,
+                interval="1h",
+                group_by="ticker",
+                auto_adjust=False,
+                progress=False,
+                threads=True,
+            )
+            closes = close_columns_from_download(raw, batch)
+            if not closes.empty:
+                frames.append(closes.astype("float32"))
+            del raw
+            gc.collect()
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, axis=1)
+
+    def record_from_breadth_row(ts: Any, row: Any, label: str | None = None):
+        def v(x: Any) -> float | None:
+            return None if pd.isna(x) else round(float(x), 2)
+
+        def n(x: Any) -> int | None:
+            return None if pd.isna(x) else int(round(float(x)))
+
+        if label is None:
+            label = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)
+        return {"t": label,
+                "s": v(row["strong"]), "bd": v(row["breakdown"]),
+                "pb": v(row["pullback"]), "rc": v(row["recovery"]),
+                "mid": v(row.get("ntss")), "mom": v(row.get("momentum")),
+                "a20": v(row.get("above_20")),
+                "a50": v(row.get("above_50")),
+                "a200": v(row.get("above_200")),
+                "a20_n": n(row.get("above_20_n")),
+                "a50_n": n(row.get("above_50_n")),
+                "a200_n": n(row.get("above_200_n")),
+                "valid_20_n": n(row.get("valid_20_n")),
+                "valid_50_n": n(row.get("valid_50_n")),
+                "valid_200_n": n(row.get("valid_200_n"))}
 
     def daily_close_payload(daily_df, ntss=None, min_n: int = app.BREADTH_MIN_STOCKS, universe_denominator: int | None = None):
         daily_breadth = calculate_breadth_from_daily(
@@ -108,22 +237,20 @@ def _install_breadth_patch(app: Any) -> None:
         previous = valid.iloc[-2] if len(valid) >= 2 else None
         current_ts = valid.index[-1]
         previous_ts = valid.index[-2] if previous is not None else None
-        payload = {"current": app._record_from_breadth_row(current_ts, current, f"{current_ts:%Y-%m-%d} EOD")}
+        payload = {"current": record_from_breadth_row(current_ts, current, f"{current_ts:%Y-%m-%d} EOD")}
         if previous is not None and previous_ts is not None:
-            payload["previous"] = app._record_from_breadth_row(previous_ts, previous, f"{previous_ts:%Y-%m-%d} EOD")
+            payload["previous"] = record_from_breadth_row(previous_ts, previous, f"{previous_ts:%Y-%m-%d} EOD")
         return payload
 
     def compute_breadth_data():
-        print("[breadth] starting computation with fixed ticker denominator...")
+        print("[breadth] starting computation with raw Close and fixed ticker denominator...")
         symbols = app.fetch_current_symbols("sp500")
-        yf_symbols = [s.replace(".", "-") for s in symbols]
         universe_denominator = len(symbols)
 
-        history = app.fetch_history(symbols)
-        daily_df = pd.DataFrame({s: df["Close"] for s, df in history.items() if "Close" in df.columns})
+        daily_df = download_daily_closes(symbols)
 
-        print(f"[breadth] downloading {len(yf_symbols)} tickers hourly in batches...")
-        hourly_df = app._download_hourly_closes(yf_symbols)
+        print(f"[breadth] downloading {len(symbols)} tickers hourly in batches...")
+        hourly_df = download_hourly_closes(symbols)
         hourly_df = hourly_df.loc[:, hourly_df.isna().mean() < 0.5]
         if hourly_df.index.tz is None:
             hourly_df.index = hourly_df.index.tz_localize("UTC")
@@ -154,17 +281,8 @@ def _install_breadth_patch(app: Any) -> None:
         except Exception:
             idx_et = breadth.index
 
-        def v(x: Any) -> float | None:
-            return None if pd.isna(x) else round(float(x), 2)
-
         records = [
-            {"t": app.format_breadth_bar_time(idx_et[i]),
-             "s": v(row["strong"]), "bd": v(row["breakdown"]),
-             "pb": v(row["pullback"]), "rc": v(row["recovery"]),
-             "mid": v(row["ntss"]), "mom": v(row["momentum"]),
-             "a20": v(row.get("above_20")),
-             "a50": v(row.get("above_50")),
-             "a200": v(row.get("above_200"))}
+            record_from_breadth_row(idx_et[i], row, app.format_breadth_bar_time(idx_et[i]))
             for i, (_, row) in enumerate(breadth.iterrows())
         ]
         print(f"[breadth] done - {len(records)} bars")
@@ -173,6 +291,8 @@ def _install_breadth_patch(app: Any) -> None:
                 "n_stocks": universe_denominator,
                 "n_valid_daily": daily_df.shape[1],
                 "n_valid_hourly": hourly_df.shape[1],
+                "price_basis": "regular_close_not_dividend_adjusted",
+                "ma_policy": "SMA uses exact 20/50/200 completed daily closes",
                 "counting_method": "constituent_security_ticker",
                 "share_class_policy": "GOOG and GOOGL counted separately",
                 "daily_close": daily_close,
