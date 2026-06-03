@@ -7,6 +7,19 @@ from unittest.mock import patch
 import pandas as pd
 
 import live_stock_signal_app as app
+from scripts import fetch_stock_data
+
+
+class StockUniverseTests(unittest.TestCase):
+    def test_symbol_normalization_keeps_alphabet_share_classes_separate(self) -> None:
+        frame = pd.DataFrame({"Symbol": ["GOOG", "GOOGL", "BRK.B", "BRK-B", "GOOG"]})
+
+        symbols = fetch_stock_data._symbols_from_column(frame, "Symbol")
+
+        self.assertEqual(symbols.count("GOOG"), 1)
+        self.assertEqual(symbols.count("GOOGL"), 1)
+        self.assertIn("BRK-B", symbols)
+        self.assertEqual(len(symbols), 3)
 
 
 class CacheTests(unittest.TestCase):
