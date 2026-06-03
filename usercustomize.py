@@ -8,6 +8,7 @@ SMA200 screener, which is the external reference used for the live chart.
 from __future__ import annotations
 
 import importlib.abc
+import importlib.machinery
 import re
 import sys
 from typing import Any
@@ -61,7 +62,6 @@ def _apply_finviz_calibration(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return payload
     try:
-        universe_symbols = set()
         n_stocks = int(payload.get("n_stocks") or 0)
         finviz_symbols = _fetch_finviz_sma200_symbols()
         if not finviz_symbols or not n_stocks:
@@ -125,13 +125,10 @@ class _PatchFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname != "live_stock_signal_app":
             return None
-        for finder in sys.meta_path:
-            if finder is self:
-                continue
-            spec = finder.find_spec(fullname, path, target) if hasattr(finder, "find_spec") else None
-            if spec and isinstance(spec.loader, importlib.abc.Loader):
-                spec.loader = _PatchLoader(spec.loader)
-                return spec
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        if spec and isinstance(spec.loader, importlib.abc.Loader):
+            spec.loader = _PatchLoader(spec.loader)
+            return spec
         return None
 
 
