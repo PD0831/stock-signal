@@ -1,80 +1,46 @@
 """
-Download S&P 500 daily OHLCV data via yfinance.
+Download SPY holdings daily OHLCV data via yfinance.
 Run by GitHub Actions daily; output committed to data/ for market breadth analysis.
 
 Breadth is calculated by constituent security ticker, not by issuer. Dual-share
 classes such as GOOG/GOOGL are intentionally kept as separate symbols.
 """
-import io
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import requests
 import yfinance as yf
+
+try:
+    from scripts.spy_universe import download_spy_universe
+except ModuleNotFoundError:
+    from spy_universe import download_spy_universe
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
 PERIOD = "2y"
-UNIVERSE = "sp500"
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
-
-_SP500_PUBLIC_CSV = (
-    "https://raw.githubusercontent.com/datasets/"
-    "s-and-p-500-companies/main/data/constituents.csv"
-)
+UNIVERSE = "spy_holdings"
 
 
-def _read_html(url: str, **kwargs) -> list[pd.DataFrame]:
-    resp = requests.get(url, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
-    return pd.read_html(io.StringIO(resp.text), **kwargs)
-
-
-def normalize_symbol(value: object) -> str | None:
-    if value is None or pd.isna(value):
-        return None
-    symbol = str(value).strip().upper().replace(".", "-")
-    return symbol or None
-
-
-def _symbols_from_column(frame: pd.DataFrame, column: str) -> list[str]:
-    symbols = [s for s in frame[column].map(normalize_symbol).tolist() if s]
-    return sorted(dict.fromkeys(symbols))
-
-
-def get_sp500() -> list[str]:
-    # Try public GitHub CSV first (no scraping needed).
-    try:
-        resp = requests.get(_SP500_PUBLIC_CSV, timeout=30)
-        resp.raise_for_status()
-        df = pd.read_csv(io.StringIO(resp.text))
-        tickers = _symbols_from_column(df, "Symbol")
-        print(f"  S&P 500 from public dataset: {len(tickers)}")
-        return tickers
-    except Exception as e:
-        print(f"  Public dataset failed ({e}), trying Wikipedia...")
-
-    try:
-        tables = _read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        tickers = _symbols_from_column(tables[0], "Symbol")
-        print(f"  S&P 500 from Wikipedia: {len(tickers)}")
-        return tickers
-    except Exception as e2:
-        print(f"  Wikipedia also failed ({e2})")
-        return []
+def get_sp500() -> tuple[list[str], dict[str, object]]:
+    universe = download_spy_universe()
+    tickers = universe.symbols
+    diagnostics = {
+        "universe_source": "spdr_spy_holdings_xlsx",
+        "spy_holdings_as_of": universe.as_of,
+        "spy_raw_holding_rows": universe.raw_holding_rows,
+        "spy_excluded_rows": universe.excluded_rows,
+        "spy_excluded_count": universe.excluded_count,
+    }
+    print(
+        "  SPY holdings universe: "
+        f"{len(tickers)} equity tickers "
+        f"({universe.raw_holding_rows} raw rows, {universe.excluded_count} excluded)"
+    )
+    return tickers, diagnostics
 
 
 def fetch_universe(name: str, symbols: list[str]) -> pd.DataFrame:
@@ -83,7 +49,7 @@ def fetch_universe(name: str, symbols: list[str]) -> pd.DataFrame:
         symbols,
         period=PERIOD,
         interval="1d",
-        auto_adjust=True,
+        auto_adjust=False,
         progress=False,
         threads=True,
     )
@@ -110,9 +76,9 @@ def fetch_universe(name: str, symbols: list[str]) -> pd.DataFrame:
 def main():
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
-    sp_syms = get_sp500()
+    sp_syms, diagnostics = get_sp500()
     if not sp_syms:
-        print("ERROR: no S&P 500 symbols loaded", file=sys.stderr)
+        print("ERROR: no SPY holdings symbols loaded", file=sys.stderr)
         sys.exit(1)
 
     if {"GOOG", "GOOGL"}.issubset(sp_syms):
@@ -120,7 +86,7 @@ def main():
     else:
         print("  WARNING: expected GOOG and GOOGL to be present as separate tickers", file=sys.stderr)
 
-    df = fetch_universe("S&P 500 breadth universe", sp_syms)
+    df = fetch_universe("SPY holdings breadth universe", sp_syms)
     if df.empty:
         print("ERROR: no data downloaded", file=sys.stderr)
         sys.exit(1)
@@ -135,12 +101,14 @@ def main():
         "universe": UNIVERSE,
         "counting_method": "constituent_security_ticker",
         "share_class_policy": "GOOG and GOOGL counted separately",
+        "price_basis": "regular_close_not_dividend_adjusted",
         "expected_symbols": len(sp_syms),
         "symbols": len(downloaded_symbols),
         "missing_symbols": sorted(set(sp_syms) - set(downloaded_symbols)),
         "rows": len(df),
         "date_min": str(df["date"].min()),
         "date_max": str(df["date"].max()),
+        **diagnostics,
     }
     (DATA_DIR / "stocks_meta.json").write_text(json.dumps(meta, indent=2))
     print("Metadata saved.")
