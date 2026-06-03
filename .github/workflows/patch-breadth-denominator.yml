@@ -1,0 +1,144 @@
+name: Patch breadth denominator
+
+on:
+  push:
+    paths:
+      - .github/workflows/patch-breadth-denominator.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch live breadth denominator
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("live_stock_signal_app.py")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = {
+          '''def _pct_above(hourly_prices: pd.DataFrame, ref: pd.DataFrame, min_n: int) -> pd.Series:
+              valid   = hourly_prices.notna() & ref.notna()
+              above   = (hourly_prices > ref) & valid
+              n_valid = valid.sum(axis=1)
+              pct = above.sum(axis=1).astype(float) / n_valid.clip(lower=1) * 100
+              pct[n_valid < min_n] = np.nan
+              return pct
+          ''': '''def _pct_above(
+              hourly_prices: pd.DataFrame,
+              ref: pd.DataFrame,
+              min_n: int,
+              denominator: int | None = None,
+          ) -> pd.Series:
+              valid   = hourly_prices.notna() & ref.notna()
+              above   = (hourly_prices > ref) & valid
+              n_valid = valid.sum(axis=1)
+              denom = denominator if denominator and denominator > 0 else hourly_prices.shape[1]
+              pct = above.sum(axis=1).astype(float) / max(denom, 1) * 100
+              pct[n_valid < min_n] = np.nan
+              return pct
+          ''',
+          '''def _calculate_breadth_from_daily(daily: pd.DataFrame, min_n: int = BREADTH_MIN_STOCKS) -> pd.DataFrame:
+              ma20_ts  = daily.rolling(20,  min_periods=15).mean()
+              ma50_ts  = daily.rolling(50,  min_periods=40).mean()
+              ma200_ts = daily.rolling(200, min_periods=150).mean()
+              above_20  = _pct_above(daily, ma20_ts,  min_n)
+              above_50  = _pct_above(daily, ma50_ts,  min_n)
+              above_200 = _pct_above(daily, ma200_ts, min_n)
+          ''': '''def _calculate_breadth_from_daily(
+              daily: pd.DataFrame,
+              min_n: int = BREADTH_MIN_STOCKS,
+              denominator: int | None = None,
+          ) -> pd.DataFrame:
+              ma20_ts  = daily.rolling(20,  min_periods=15).mean()
+              ma50_ts  = daily.rolling(50,  min_periods=40).mean()
+              ma200_ts = daily.rolling(200, min_periods=150).mean()
+              above_20  = _pct_above(daily, ma20_ts,  min_n, denominator=denominator)
+              above_50  = _pct_above(daily, ma50_ts,  min_n, denominator=denominator)
+              above_200 = _pct_above(daily, ma200_ts, min_n, denominator=denominator)
+          ''',
+          '''def _calculate_breadth(daily: pd.DataFrame, hourly: pd.DataFrame) -> pd.DataFrame:
+              common   = daily.columns.intersection(hourly.columns)
+          ''': '''def _calculate_breadth(
+              daily: pd.DataFrame,
+              hourly: pd.DataFrame,
+              denominator: int | None = None,
+          ) -> pd.DataFrame:
+              common   = daily.columns.intersection(hourly.columns)
+          ''',
+          '''    above_20  = _ema(_pct_above(h, ma20_ref[common],  BREADTH_MIN_STOCKS), BREADTH_SMOOTH)
+              above_50  = _ema(_pct_above(h, ma50_ref[common],  BREADTH_MIN_STOCKS), BREADTH_SMOOTH)
+              above_200 = _ema(_pct_above(h, ma200_ref[common], BREADTH_MIN_STOCKS), BREADTH_SMOOTH)
+          ''': '''    above_20  = _ema(_pct_above(h, ma20_ref[common],  BREADTH_MIN_STOCKS, denominator=denominator), BREADTH_SMOOTH)
+              above_50  = _ema(_pct_above(h, ma50_ref[common],  BREADTH_MIN_STOCKS, denominator=denominator), BREADTH_SMOOTH)
+              above_200 = _ema(_pct_above(h, ma200_ref[common], BREADTH_MIN_STOCKS, denominator=denominator), BREADTH_SMOOTH)
+          ''',
+          '''def daily_close_payload(
+              daily_df: pd.DataFrame,
+              ntss: pd.Series | None = None,
+              min_n: int = BREADTH_MIN_STOCKS,
+          ) -> dict[str, Any] | None:
+              daily_breadth = _calculate_breadth_from_daily(daily_df, min_n=min_n)
+          ''': '''def daily_close_payload(
+              daily_df: pd.DataFrame,
+              ntss: pd.Series | None = None,
+              min_n: int = BREADTH_MIN_STOCKS,
+              universe_denominator: int | None = None,
+          ) -> dict[str, Any] | None:
+              daily_breadth = _calculate_breadth_from_daily(
+                  daily_df,
+                  min_n=min_n,
+                  denominator=universe_denominator,
+              )
+          ''',
+          '''    breadth = _calculate_breadth(daily_df, hourly_df)
+              daily_close = daily_close_payload(daily_df, _download_daily_ntss())
+          ''': '''    universe_denominator = len(symbols)
+              breadth = _calculate_breadth(daily_df, hourly_df, denominator=universe_denominator)
+              daily_close = daily_close_payload(
+                  daily_df,
+                  _download_daily_ntss(),
+                  universe_denominator=universe_denominator,
+              )
+          ''',
+          '''    return {"generated_at": datetime.now().isoformat(timespec="seconds"),
+                      "timeframe": "1H", "n_stocks": daily_df.shape[1],
+                      "daily_close": daily_close,
+          ''': '''    return {"generated_at": datetime.now().isoformat(timespec="seconds"),
+                      "timeframe": "1H", "n_stocks": len(symbols),
+                      "n_valid_daily": daily_df.shape[1],
+                      "n_valid_hourly": hourly_df.shape[1],
+                      "counting_method": "constituent_security_ticker",
+                      "share_class_policy": "GOOG and GOOGL counted separately",
+                      "daily_close": daily_close,
+          ''',
+          '''    <span style="font-size:11px;color:#8b949e">S&amp;P 500 · Hourly · yfinance</span>
+          ''': '''    <span style="font-size:11px;color:#8b949e">S&amp;P 500 · 505 constituent tickers · GOOG/GOOGL counted separately</span>
+          ''',
+          '''  document.getElementById("nStocks").textContent = DATA.n_stocks;
+          ''': '''  const validBits = [];
+            if (DATA.n_valid_daily != null) validBits.push("daily " + DATA.n_valid_daily);
+            if (DATA.n_valid_hourly != null) validBits.push("hourly " + DATA.n_valid_hourly);
+            document.getElementById("nStocks").textContent = DATA.n_stocks + (validBits.length ? " ticker denominator (" + validBits.join(", ") + " valid)" : " ticker denominator");
+          ''',
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"pattern not found:\n{old[:200]}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add live_stock_signal_app.py
+          git commit -m "fix: use fixed SP500 ticker denominator for breadth" || exit 0
+          git push
