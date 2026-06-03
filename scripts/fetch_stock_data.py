@@ -1,18 +1,25 @@
 """
-Downloads NASDAQ100 + S&P500 daily OHLCV data via yfinance.
-Run by GitHub Actions daily; output committed to data/ for remote analysis.
+Download S&P 500 daily OHLCV data via yfinance.
+Run by GitHub Actions daily; output committed to data/ for market breadth analysis.
+
+Breadth is calculated by constituent security ticker, not by issuer. Dual-share
+classes such as GOOG/GOOGL are intentionally kept as separate symbols.
 """
-import io, json, sys
+import io
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 import requests
 import yfinance as yf
-from pathlib import Path
-from datetime import datetime
 
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
 PERIOD = "2y"
+UNIVERSE = "sp500"
 
 HEADERS = {
     "User-Agent": (
@@ -23,21 +30,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
-
-# Fallback ticker lists (updated 2025-Q4) used when Wikipedia is unreachable
-_NDX100_FALLBACK = [
-    "AAPL","ABNB","ADBE","ADI","ADP","ADSK","AEP","AMAT","AMD","AMGN",
-    "AMZN","ANSS","APP","ARM","ASML","AVGO","AXON","AZN","BIIB","BKNG",
-    "BKR","CCEP","CDNS","CDW","CEG","CHTR","CMCSA","COST","CPRT","CRWD",
-    "CSCO","CSGP","CSX","CTAS","CTSH","DASH","DDOG","DXCM","EA","EXC",
-    "FANG","FAST","FTNT","GEHC","GFS","GILD","GOOG","GOOGL","HON","IDXX",
-    "ILMN","INTC","INTU","ISRG","KDP","KHC","KLAC","LIN","LRCX","LULU",
-    "MAR","MCHP","MDLZ","MELI","META","MNST","MRNA","MRVL","MSFT","MU",
-    "NFLX","NVDA","NXPI","ODFL","ON","ORLY","PANW","PAYX","PCAR","PDD",
-    "PEP","PYPL","QCOM","REGN","ROP","ROST","SBUX","SMCI","SNPS","SPLK",
-    "TEAM","TMUS","TSLA","TTD","TTWO","TXN","VRSK","VRTX","WBD","WDAY",
-    "XEL","ZS",
-]
 
 _SP500_PUBLIC_CSV = (
     "https://raw.githubusercontent.com/datasets/"
@@ -51,44 +43,42 @@ def _read_html(url: str, **kwargs) -> list[pd.DataFrame]:
     return pd.read_html(io.StringIO(resp.text), **kwargs)
 
 
-def get_nasdaq100() -> list[str]:
-    try:
-        tables = _read_html(
-            "https://en.wikipedia.org/wiki/Nasdaq-100",
-            attrs={"id": "constituents"},
-        )
-        tickers = tables[0]["Ticker"].str.replace(".", "-", regex=False).tolist()
-        print(f"  NASDAQ-100 from Wikipedia: {len(tickers)}")
-        return tickers
-    except Exception as e:
-        print(f"  Wikipedia blocked ({e}), using fallback list ({len(_NDX100_FALLBACK)})")
-        return _NDX100_FALLBACK
+def normalize_symbol(value: object) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    symbol = str(value).strip().upper().replace(".", "-")
+    return symbol or None
+
+
+def _symbols_from_column(frame: pd.DataFrame, column: str) -> list[str]:
+    symbols = [s for s in frame[column].map(normalize_symbol).tolist() if s]
+    return sorted(dict.fromkeys(symbols))
 
 
 def get_sp500() -> list[str]:
-    # Try public GitHub CSV first (no scraping needed)
+    # Try public GitHub CSV first (no scraping needed).
     try:
         resp = requests.get(_SP500_PUBLIC_CSV, timeout=30)
         resp.raise_for_status()
         df = pd.read_csv(io.StringIO(resp.text))
-        tickers = df["Symbol"].str.replace(".", "-", regex=False).tolist()
+        tickers = _symbols_from_column(df, "Symbol")
         print(f"  S&P 500 from public dataset: {len(tickers)}")
         return tickers
     except Exception as e:
-        print(f"  Public dataset failed ({e}), trying Wikipedia…")
+        print(f"  Public dataset failed ({e}), trying Wikipedia...")
 
     try:
         tables = _read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        tickers = tables[0]["Symbol"].str.replace(".", "-", regex=False).tolist()
+        tickers = _symbols_from_column(tables[0], "Symbol")
         print(f"  S&P 500 from Wikipedia: {len(tickers)}")
         return tickers
     except Exception as e2:
-        print(f"  Wikipedia also failed ({e2}), using NASDAQ-100 only")
+        print(f"  Wikipedia also failed ({e2})")
         return []
 
 
 def fetch_universe(name: str, symbols: list[str]) -> pd.DataFrame:
-    print(f"Downloading {name} ({len(symbols)} symbols)…")
+    print(f"Downloading {name} ({len(symbols)} symbols)...")
     raw = yf.download(
         symbols,
         period=PERIOD,
@@ -120,24 +110,35 @@ def fetch_universe(name: str, symbols: list[str]) -> pd.DataFrame:
 def main():
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
-    nasdaq_syms = get_nasdaq100()
-    sp_syms     = get_sp500()
-    all_syms    = sorted(set(nasdaq_syms) | set(sp_syms))
-    print(f"Combined unique tickers: {len(all_syms)}")
+    sp_syms = get_sp500()
+    if not sp_syms:
+        print("ERROR: no S&P 500 symbols loaded", file=sys.stderr)
+        sys.exit(1)
 
-    df = fetch_universe("combined", all_syms)
+    if {"GOOG", "GOOGL"}.issubset(sp_syms):
+        print("  Alphabet share classes retained separately: GOOG, GOOGL")
+    else:
+        print("  WARNING: expected GOOG and GOOGL to be present as separate tickers", file=sys.stderr)
+
+    df = fetch_universe("S&P 500 breadth universe", sp_syms)
     if df.empty:
         print("ERROR: no data downloaded", file=sys.stderr)
         sys.exit(1)
 
     out_path = DATA_DIR / "stocks_daily.csv"
     df.to_csv(out_path, index=False)
-    print(f"Saved {len(df):,} rows → {out_path}  (as of {ts})")
+    print(f"Saved {len(df):,} rows -> {out_path}  (as of {ts})")
 
+    downloaded_symbols = sorted(df["symbol"].unique())
     meta = {
         "updated_at": ts,
+        "universe": UNIVERSE,
+        "counting_method": "constituent_security_ticker",
+        "share_class_policy": "GOOG and GOOGL counted separately",
+        "expected_symbols": len(sp_syms),
+        "symbols": len(downloaded_symbols),
+        "missing_symbols": sorted(set(sp_syms) - set(downloaded_symbols)),
         "rows": len(df),
-        "symbols": len(df["symbol"].unique()),
         "date_min": str(df["date"].min()),
         "date_max": str(df["date"].max()),
     }
