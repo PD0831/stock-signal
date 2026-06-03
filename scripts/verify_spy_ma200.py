@@ -88,7 +88,7 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
     asof = available_dates.max()
     daily = daily.loc[:asof]
 
-    ma200 = daily.rolling(200, min_periods=args.min_periods).mean()
+    ma200 = daily.rolling(200, min_periods=1).mean()
     prices = daily.loc[asof]
     refs = ma200.loc[asof]
     valid = prices.notna() & refs.notna()
@@ -97,13 +97,13 @@ def verify(args: argparse.Namespace) -> dict[str, object]:
     short_or_missing = []
     for symbol in symbols:
         count = int(daily[symbol].dropna().shape[0]) if symbol in daily.columns else 0
-        if count < args.min_periods:
+        if count < 1:
             short_or_missing.append({"symbol": symbol, "bars": count})
 
     result = {
         "date": str(asof.date()),
         "price_basis": "regular_close_not_dividend_adjusted",
-        "ma_policy": f"SMA200 with min_periods={args.min_periods}",
+        "ma_policy": "SMA200, falling back to available-history average before 200 closes",
         "universe_source": "spdr_spy_holdings_xlsx",
         "spy_holdings_as_of": universe.as_of,
         "spy_raw_holding_rows": universe.raw_holding_rows,

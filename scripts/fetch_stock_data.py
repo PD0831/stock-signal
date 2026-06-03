@@ -9,6 +9,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -23,6 +24,17 @@ DATA_DIR.mkdir(exist_ok=True)
 
 PERIOD = "2y"
 UNIVERSE = "spy_holdings"
+MARKET_DATA_READY_HOUR = 16
+MARKET_DATA_READY_MINUTE = 15
+
+
+def _symbols_from_column(frame: pd.DataFrame, column: str) -> list[str]:
+    symbols = (
+        frame[column]
+        .dropna()
+        .map(lambda value: str(value).strip().upper().replace(".", "-"))
+    )
+    return sorted({symbol for symbol in symbols if symbol and symbol != "NAN"})
 
 
 def get_sp500() -> tuple[list[str], dict[str, object]]:
@@ -73,6 +85,26 @@ def fetch_universe(name: str, symbols: list[str]) -> pd.DataFrame:
     return out.sort_values(["symbol", "date"]).reset_index(drop=True)
 
 
+def drop_unfinished_current_session(df: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
+    if df.empty:
+        return df
+    now_et = now or datetime.now(ZoneInfo("America/New_York"))
+    if now_et.tzinfo is None:
+        now_et = now_et.replace(tzinfo=ZoneInfo("America/New_York"))
+    else:
+        now_et = now_et.astimezone(ZoneInfo("America/New_York"))
+    ready = now_et.replace(
+        hour=MARKET_DATA_READY_HOUR,
+        minute=MARKET_DATA_READY_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if now_et >= ready:
+        return df
+    current_day = now_et.date()
+    return df[df["date"] < current_day].reset_index(drop=True)
+
+
 def main():
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
@@ -90,6 +122,7 @@ def main():
     if df.empty:
         print("ERROR: no data downloaded", file=sys.stderr)
         sys.exit(1)
+    df = drop_unfinished_current_session(df)
 
     out_path = DATA_DIR / "stocks_daily.csv"
     df.to_csv(out_path, index=False)

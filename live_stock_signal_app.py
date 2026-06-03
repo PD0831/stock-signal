@@ -38,6 +38,8 @@ BREADTH_PERIOD     = "3mo"
 BREADTH_SMOOTH     = 3
 BREADTH_MIN_STOCKS = 100
 _YF_BATCH_SIZE     = 50
+BREADTH_DAILY_PERIOD = "2y"
+BREADTH_MA_POLICY = "MA windows use available-history average until 20/50/200 closes exist"
 
 # ── In-memory cache (LRU-bounded; evicts on expiry to free RAM on 512MB tier) ──
 _memory_cache: "OrderedDict[str, tuple[datetime, Any]]" = OrderedDict()
@@ -146,6 +148,29 @@ def fetch_current_symbols(universe: str) -> list[str]:
     return cache_set(f"symbols:{universe}", fallback_current_symbols(universe))
 
 
+def fetch_breadth_symbols() -> tuple[list[str], dict[str, Any]]:
+    try:
+        from scripts.spy_universe import download_spy_universe
+
+        universe = download_spy_universe()
+        return universe.symbols, {
+            "universe_source": "spdr_spy_holdings_xlsx",
+            "spy_holdings_as_of": universe.as_of,
+            "spy_raw_holding_rows": universe.raw_holding_rows,
+            "spy_excluded_rows": universe.excluded_rows,
+            "spy_excluded_count": universe.excluded_count,
+        }
+    except Exception as exc:
+        symbols = fetch_current_symbols("sp500")
+        return symbols, {
+            "universe_source": "fallback_sp500_wikipedia",
+            "universe_error": str(exc),
+            "spy_raw_holding_rows": None,
+            "spy_excluded_rows": [],
+            "spy_excluded_count": None,
+        }
+
+
 def flatten_yfinance_frame(frame: pd.DataFrame, symbols: list[str]) -> dict[str, pd.DataFrame]:
     data: dict[str, pd.DataFrame] = {}
     if frame.empty:
@@ -219,7 +244,7 @@ def _download_hourly_closes(yf_symbols: list[str]) -> pd.DataFrame:
         batch = yf_symbols[i:i + _YF_BATCH_SIZE]
         raw = yf.download(
             batch, period=BREADTH_PERIOD, interval="1h",
-            group_by="ticker", auto_adjust=True, progress=False, threads=True,
+            group_by="ticker", auto_adjust=False, progress=False, threads=True,
         )
         closes = _close_columns_from_download(raw, batch)
         if not closes.empty:
@@ -229,6 +254,30 @@ def _download_hourly_closes(yf_symbols: list[str]) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, axis=1)
+
+
+def _download_daily_closes(yf_symbols: list[str]) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for i in range(0, len(yf_symbols), _YF_BATCH_SIZE):
+        batch = yf_symbols[i:i + _YF_BATCH_SIZE]
+        raw = yf.download(
+            batch, period=BREADTH_DAILY_PERIOD, interval="1d",
+            group_by="ticker", auto_adjust=False, progress=False, threads=True,
+        )
+        closes = _close_columns_from_download(raw, batch)
+        if not closes.empty:
+            frames.append(closes.astype("float32"))
+        del raw
+        gc.collect()
+    if not frames:
+        return pd.DataFrame()
+    daily = pd.concat(frames, axis=1)
+    daily = daily.loc[:, ~daily.columns.duplicated()]
+    idx = pd.DatetimeIndex(daily.index)
+    if idx.tz is not None:
+        idx = idx.tz_convert("America/New_York").tz_localize(None)
+    daily.index = pd.DatetimeIndex(idx).normalize()
+    return daily.sort_index()
 
 
 def issuer_key(symbol: str) -> str:
@@ -426,28 +475,59 @@ def _daily_to_hourly_ref(daily_ma: pd.DataFrame, hourly_idx: pd.DatetimeIndex) -
     return ref.ffill()
 
 
-def _pct_above(hourly_prices: pd.DataFrame, ref: pd.DataFrame, min_n: int) -> pd.Series:
+def _available_history_ma(prices: pd.DataFrame, window: int) -> pd.DataFrame:
+    return prices.rolling(window, min_periods=1).mean()
+
+
+def _valid_count(prices: pd.DataFrame, ref: pd.DataFrame) -> pd.Series:
+    return (prices.notna() & ref.notna()).sum(axis=1).astype(float)
+
+
+def _count_above(prices: pd.DataFrame, ref: pd.DataFrame, min_n: int) -> pd.Series:
+    valid = prices.notna() & ref.notna()
+    counts = ((prices > ref) & valid).sum(axis=1).astype(float)
+    counts[valid.sum(axis=1) < min_n] = np.nan
+    return counts
+
+
+def _pct_above(
+    hourly_prices: pd.DataFrame,
+    ref: pd.DataFrame,
+    min_n: int,
+    denominator: int | None = None,
+) -> pd.Series:
     valid   = hourly_prices.notna() & ref.notna()
     above   = (hourly_prices > ref) & valid
     n_valid = valid.sum(axis=1)
-    pct = above.sum(axis=1).astype(float) / n_valid.clip(lower=1) * 100
+    denom = denominator if denominator and denominator > 0 else n_valid.clip(lower=1)
+    pct = above.sum(axis=1).astype(float) / denom * 100
     pct[n_valid < min_n] = np.nan
     return pct
 
 
-def _calculate_breadth_from_daily(daily: pd.DataFrame, min_n: int = BREADTH_MIN_STOCKS) -> pd.DataFrame:
-    ma20_ts  = daily.rolling(20,  min_periods=15).mean()
-    ma50_ts  = daily.rolling(50,  min_periods=40).mean()
-    ma200_ts = daily.rolling(200, min_periods=150).mean()
-    above_20  = _pct_above(daily, ma20_ts,  min_n)
-    above_50  = _pct_above(daily, ma50_ts,  min_n)
-    above_200 = _pct_above(daily, ma200_ts, min_n)
+def _calculate_breadth_from_daily(
+    daily: pd.DataFrame,
+    min_n: int = BREADTH_MIN_STOCKS,
+    denominator: int | None = None,
+) -> pd.DataFrame:
+    ma20_ts  = _available_history_ma(daily, 20)
+    ma50_ts  = _available_history_ma(daily, 50)
+    ma200_ts = _available_history_ma(daily, 200)
+    above_20  = _pct_above(daily, ma20_ts,  min_n, denominator)
+    above_50  = _pct_above(daily, ma50_ts,  min_n, denominator)
+    above_200 = _pct_above(daily, ma200_ts, min_n, denominator)
     m  = pd.concat([above_20, above_50, above_200], axis=1)
     m2 = pd.concat([above_20, above_50], axis=1)
     out = pd.DataFrame({
         "above_20":  above_20.round(2),
         "above_50":  above_50.round(2),
         "above_200": above_200.round(2),
+        "above_20_n": _count_above(daily, ma20_ts, min_n),
+        "above_50_n": _count_above(daily, ma50_ts, min_n),
+        "above_200_n": _count_above(daily, ma200_ts, min_n),
+        "valid_20_n": _valid_count(daily, ma20_ts),
+        "valid_50_n": _valid_count(daily, ma50_ts),
+        "valid_200_n": _valid_count(daily, ma200_ts),
         "strong":    m.min(axis=1).round(2),
         "breakdown": (100 - m.max(axis=1)).round(2),
         "pullback":  (m2.min(axis=1) - m.min(axis=1)).round(2),
@@ -457,24 +537,31 @@ def _calculate_breadth_from_daily(daily: pd.DataFrame, min_n: int = BREADTH_MIN_
     return out
 
 
-def _calculate_breadth(daily: pd.DataFrame, hourly: pd.DataFrame) -> pd.DataFrame:
+def _calculate_breadth(
+    daily: pd.DataFrame,
+    hourly: pd.DataFrame,
+    denominator: int | None = None,
+) -> pd.DataFrame:
     common   = daily.columns.intersection(hourly.columns)
-    ma20_ts  = daily[common].rolling(20,  min_periods=15).mean()
-    ma50_ts  = daily[common].rolling(50,  min_periods=40).mean()
-    ma200_ts = daily[common].rolling(200, min_periods=150).mean()
+    ma20_ts  = _available_history_ma(daily[common], 20)
+    ma50_ts  = _available_history_ma(daily[common], 50)
+    ma200_ts = _available_history_ma(daily[common], 200)
     ma20_ref  = _daily_to_hourly_ref(ma20_ts,  hourly.index)
     ma50_ref  = _daily_to_hourly_ref(ma50_ts,  hourly.index)
     ma200_ref = _daily_to_hourly_ref(ma200_ts, hourly.index)
     h = hourly[common]
-    above_20  = _ema(_pct_above(h, ma20_ref[common],  BREADTH_MIN_STOCKS), BREADTH_SMOOTH)
-    above_50  = _ema(_pct_above(h, ma50_ref[common],  BREADTH_MIN_STOCKS), BREADTH_SMOOTH)
-    above_200 = _ema(_pct_above(h, ma200_ref[common], BREADTH_MIN_STOCKS), BREADTH_SMOOTH)
+    above_20  = _ema(_pct_above(h, ma20_ref[common],  BREADTH_MIN_STOCKS, denominator), BREADTH_SMOOTH)
+    above_50  = _ema(_pct_above(h, ma50_ref[common],  BREADTH_MIN_STOCKS, denominator), BREADTH_SMOOTH)
+    above_200 = _ema(_pct_above(h, ma200_ref[common], BREADTH_MIN_STOCKS, denominator), BREADTH_SMOOTH)
     m  = pd.concat([above_20, above_50, above_200], axis=1)
     m2 = pd.concat([above_20, above_50], axis=1)
     return pd.DataFrame({
         "above_20":  above_20.round(2),
         "above_50":  above_50.round(2),
         "above_200": above_200.round(2),
+        "above_20_n": _count_above(h, ma20_ref[common], BREADTH_MIN_STOCKS),
+        "above_50_n": _count_above(h, ma50_ref[common], BREADTH_MIN_STOCKS),
+        "above_200_n": _count_above(h, ma200_ref[common], BREADTH_MIN_STOCKS),
         "strong":    m.min(axis=1).round(2),
         "breakdown": (100 - m.max(axis=1)).round(2),
         "pullback":  (m2.min(axis=1) - m.min(axis=1)).round(2),
@@ -522,6 +609,8 @@ def _download_daily_ntss() -> pd.Series:
 def _record_from_breadth_row(ts: Any, row: pd.Series, label: str | None = None) -> dict[str, Any]:
     def v(x: Any) -> float | None:
         return None if pd.isna(x) else round(float(x), 2)
+    def n(x: Any) -> int | None:
+        return None if pd.isna(x) else int(round(float(x)))
     if label is None:
         if isinstance(ts, pd.Timestamp):
             label = ts.strftime("%Y-%m-%d")
@@ -533,15 +622,22 @@ def _record_from_breadth_row(ts: Any, row: pd.Series, label: str | None = None) 
             "mid":  v(row.get("ntss")),  "mom":  v(row.get("momentum")),
             "a20":  v(row.get("above_20")),
             "a50":  v(row.get("above_50")),
-            "a200": v(row.get("above_200"))}
+            "a200": v(row.get("above_200")),
+            "a20_n": n(row.get("above_20_n")),
+            "a50_n": n(row.get("above_50_n")),
+            "a200_n": n(row.get("above_200_n")),
+            "valid_20_n": n(row.get("valid_20_n")),
+            "valid_50_n": n(row.get("valid_50_n")),
+            "valid_200_n": n(row.get("valid_200_n"))}
 
 
 def daily_close_payload(
     daily_df: pd.DataFrame,
     ntss: pd.Series | None = None,
     min_n: int = BREADTH_MIN_STOCKS,
+    denominator: int | None = None,
 ) -> dict[str, Any] | None:
-    daily_breadth = _calculate_breadth_from_daily(daily_df, min_n=min_n)
+    daily_breadth = _calculate_breadth_from_daily(daily_df, min_n=min_n, denominator=denominator)
     if ntss is not None and not ntss.empty:
         idx = pd.DatetimeIndex(daily_breadth.index)
         if idx.tz is not None:
@@ -568,13 +664,11 @@ def daily_close_payload(
 
 def compute_breadth_data() -> dict:
     print("[breadth] starting computation…")
-    symbols    = fetch_current_symbols("sp500")
+    symbols, universe_meta = fetch_breadth_symbols()
+    universe_denominator = len(symbols)
     yf_symbols = [s.replace(".", "-") for s in symbols]
 
-    # Daily — reuse existing cache if signals were fetched recently
-    history  = fetch_history(symbols)
-    daily_df = pd.DataFrame({s: df["Close"] for s, df in history.items()
-                             if "Close" in df.columns})
+    daily_df = _download_daily_closes(yf_symbols)
 
     # Hourly
     print(f"[breadth] downloading {len(yf_symbols)} tickers hourly in batches…")
@@ -583,8 +677,12 @@ def compute_breadth_data() -> dict:
     if hourly_df.index.tz is None:
         hourly_df.index = hourly_df.index.tz_localize("UTC")
 
-    breadth = _calculate_breadth(daily_df, hourly_df)
-    daily_close = daily_close_payload(daily_df, _download_daily_ntss())
+    breadth = _calculate_breadth(daily_df, hourly_df, denominator=universe_denominator)
+    daily_close = daily_close_payload(
+        daily_df,
+        _download_daily_ntss(),
+        denominator=universe_denominator,
+    )
 
     # VIX
     vix_frames: dict[str, pd.Series] = {}
@@ -606,25 +704,23 @@ def compute_breadth_data() -> dict:
     except Exception:
         idx_et = breadth.index
 
-    def v(x: Any) -> float | None:
-        return None if pd.isna(x) else round(float(x), 2)
-
     records = [
-        {"t":    format_breadth_bar_time(idx_et[i]),
-         "s":    v(row["strong"]),    "bd":   v(row["breakdown"]),
-         "pb":   v(row["pullback"]),  "rc":   v(row["recovery"]),
-         "mid":  v(row["ntss"]),      "mom":  v(row["momentum"]),
-         "a20":  v(row.get("above_20")),
-         "a50":  v(row.get("above_50")),
-         "a200": v(row.get("above_200"))}
+        _record_from_breadth_row(idx_et[i], row, format_breadth_bar_time(idx_et[i]))
         for i, (_, row) in enumerate(breadth.iterrows())
     ]
     print(f"[breadth] done — {len(records)} bars")
     return {"generated_at": datetime.now().isoformat(timespec="seconds"),
-            "timeframe": "1H", "n_stocks": daily_df.shape[1],
+            "timeframe": "1H", "n_stocks": universe_denominator,
+            "n_valid_daily": daily_df.shape[1],
+            "n_valid_hourly": hourly_df.shape[1],
+            "price_basis": "regular_close_not_dividend_adjusted",
+            "ma_policy": BREADTH_MA_POLICY,
+            "counting_method": "constituent_security_ticker",
+            "share_class_policy": "GOOG and GOOGL counted separately",
             "daily_close": daily_close,
             "previous_day_close": previous_day_close_record(records),
-            "records": records}
+            "records": records,
+            **universe_meta}
 
 
 def _bg_refresh_breadth() -> None:

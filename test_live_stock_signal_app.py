@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -20,6 +21,30 @@ class StockUniverseTests(unittest.TestCase):
         self.assertEqual(symbols.count("GOOGL"), 1)
         self.assertIn("BRK-B", symbols)
         self.assertEqual(len(symbols), 3)
+
+    def test_fetch_stock_data_drops_current_session_before_data_ready_time(self) -> None:
+        frame = pd.DataFrame({
+            "symbol": ["AAA", "AAA"],
+            "date": [pd.Timestamp("2026-06-02").date(), pd.Timestamp("2026-06-03").date()],
+            "close": [10.0, 11.0],
+        })
+        now = datetime(2026, 6, 3, 14, 25, tzinfo=ZoneInfo("America/New_York"))
+
+        filtered = fetch_stock_data.drop_unfinished_current_session(frame, now=now)
+
+        self.assertEqual(filtered["date"].tolist(), [pd.Timestamp("2026-06-02").date()])
+
+    def test_fetch_stock_data_keeps_current_session_after_data_ready_time(self) -> None:
+        frame = pd.DataFrame({
+            "symbol": ["AAA", "AAA"],
+            "date": [pd.Timestamp("2026-06-02").date(), pd.Timestamp("2026-06-03").date()],
+            "close": [10.0, 11.0],
+        })
+        now = datetime(2026, 6, 3, 16, 16, tzinfo=ZoneInfo("America/New_York"))
+
+        filtered = fetch_stock_data.drop_unfinished_current_session(frame, now=now)
+
+        self.assertEqual(filtered["date"].tolist(), frame["date"].tolist())
 
 
 class CacheTests(unittest.TestCase):
@@ -190,6 +215,35 @@ class BreadthReferenceTests(unittest.TestCase):
         self.assertIsNotNone(payload)
         self.assertEqual(payload["current"]["t"], f"{idx[-2]:%Y-%m-%d} EOD")
         self.assertEqual(payload["previous"]["t"], f"{idx[-3]:%Y-%m-%d} EOD")
+
+    def test_daily_breadth_uses_available_history_ma_for_short_histories(self) -> None:
+        idx = pd.date_range("2026-01-01", periods=5, freq="B")
+        daily = pd.DataFrame({
+            "LONG": [10.0, 11.0, 12.0, 13.0, 14.0],
+            "SHORT": [20.0, 20.0, 20.0, 20.0, 30.0],
+            "BELOW": [50.0, 50.0, 50.0, 50.0, 40.0],
+        }, index=idx)
+
+        breadth = app._calculate_breadth_from_daily(daily, min_n=1, denominator=3)
+        last = breadth.iloc[-1]
+
+        self.assertEqual(last["above_200_n"], 2)
+        self.assertEqual(last["valid_200_n"], 3)
+        self.assertEqual(last["above_200"], 66.67)
+
+    def test_daily_close_payload_reports_fixed_universe_denominator(self) -> None:
+        idx = pd.date_range("2026-01-01", periods=5, freq="B")
+        daily = pd.DataFrame({
+            "AAA": [10.0, 10.0, 10.0, 10.0, 12.0],
+            "BBB": [20.0, 20.0, 20.0, 20.0, 18.0],
+        }, index=idx)
+
+        payload = app.daily_close_payload(daily, min_n=1, denominator=3)
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["current"]["a200_n"], 1)
+        self.assertEqual(payload["current"]["valid_200_n"], 2)
+        self.assertEqual(payload["current"]["a200"], 33.33)
 
 
 if __name__ == "__main__":
