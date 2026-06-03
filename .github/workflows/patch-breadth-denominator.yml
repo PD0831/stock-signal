@@ -142,3 +142,5 @@ jobs:
           git add live_stock_signal_app.py
           git commit -m "fix: use fixed SP500 ticker denominator for breadth" || exit 0
           git push
+
+# trigger: 2026-06-03T10:00:00Z
