@@ -1,15 +1,13 @@
 {
-  "updated_at": "2026-06-14 06:42 UTC",
+  "updated_at": "2026-06-15 07:22 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
   "expected_symbols": 503,
-  "symbols": 502,
-  "missing_symbols": [
-    "JBHT"
-  ],
-  "rows": 250503,
+  "symbols": 503,
+  "missing_symbols": [],
+  "rows": 251004,
   "date_min": "2024-06-13",
   "date_max": "2026-06-12",
   "universe_source": "spdr_spy_holdings_xlsx",
