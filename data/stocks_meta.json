@@ -1,21 +1,27 @@
 {
-  "updated_at": "2026-06-24 06:08 UTC",
+  "updated_at": "2026-06-25 06:08 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
-  "expected_symbols": 503,
-  "symbols": 503,
+  "expected_symbols": 502,
+  "symbols": 502,
   "missing_symbols": [],
-  "rows": 251022,
-  "date_min": "2024-06-24",
-  "date_max": "2026-06-23",
+  "rows": 250523,
+  "date_min": "2024-06-25",
+  "date_max": "2026-06-24",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "22-Jun-2026",
+  "spy_holdings_as_of": "23-Jun-2026",
   "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
     {
       "name": "US DOLLAR",
+      "ticker": "-",
+      "currency": "USD",
+      "reason": "blank_or_cash_ticker"
+    },
+    {
+      "name": "DUPONT DE NEMOURS INC",
       "ticker": "-",
       "currency": "USD",
       "reason": "blank_or_cash_ticker"
@@ -27,5 +33,5 @@
       "reason": "contra_bookkeeping_row"
     }
   ],
-  "spy_excluded_count": 2
+  "spy_excluded_count": 3
 }
