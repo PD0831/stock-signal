@@ -1,29 +1,23 @@
 {
-  "updated_at": "2026-06-30 06:13 UTC",
+  "updated_at": "2026-07-01 06:28 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
-  "expected_symbols": 504,
-  "symbols": 504,
+  "expected_symbols": 503,
+  "symbols": 503,
   "missing_symbols": [],
-  "rows": 250054,
+  "rows": 250545,
   "date_min": "2024-07-01",
-  "date_max": "2026-06-29",
+  "date_max": "2026-06-30",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "26-Jun-2026",
-  "spy_raw_holding_rows": 507,
+  "spy_holdings_as_of": "29-Jun-2026",
+  "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
     {
       "name": "US DOLLAR",
       "ticker": "-",
       "currency": "USD",
-      "reason": "blank_or_cash_ticker"
-    },
-    {
-      "name": "HONEYWELL INTERNATIONAL INC COMMON STOCK USD1.0",
-      "ticker": "-",
-      "currency": "-",
       "reason": "blank_or_cash_ticker"
     },
     {
@@ -33,5 +27,5 @@
       "reason": "contra_bookkeeping_row"
     }
   ],
-  "spy_excluded_count": 3
+  "spy_excluded_count": 2
 }
