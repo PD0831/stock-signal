@@ -1,19 +1,25 @@
 {
-  "updated_at": "2026-07-02 06:00 UTC",
+  "updated_at": "2026-07-03 05:54 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
-  "expected_symbols": 503,
-  "symbols": 503,
+  "expected_symbols": 502,
+  "symbols": 502,
   "missing_symbols": [],
-  "rows": 250551,
-  "date_min": "2024-07-02",
-  "date_max": "2026-07-01",
+  "rows": 250054,
+  "date_min": "2024-07-03",
+  "date_max": "2026-07-02",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "30-Jun-2026",
-  "spy_raw_holding_rows": 506,
+  "spy_holdings_as_of": "01-Jul-2026",
+  "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
+    {
+      "name": "EXXONMOBIL HOLDINGS CORP",
+      "ticker": "2670549D",
+      "currency": "USD",
+      "reason": "non_ticker_identifier"
+    },
     {
       "name": "US DOLLAR",
       "ticker": "-",
@@ -25,12 +31,6 @@
       "ticker": "2602335D",
       "currency": "USD",
       "reason": "contra_bookkeeping_row"
-    },
-    {
-      "name": "MOBILITY GLOBAL INC W COMMON STOCK",
-      "ticker": "-",
-      "currency": "-",
-      "reason": "blank_or_cash_ticker"
     }
   ],
   "spy_excluded_count": 3
