@@ -1,27 +1,19 @@
 {
-  "updated_at": "2026-07-06 06:37 UTC",
+  "updated_at": "2026-07-07 06:09 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
-  "expected_symbols": 502,
-  "symbols": 501,
-  "missing_symbols": [
-    "COIN"
-  ],
-  "rows": 249553,
-  "date_min": "2024-07-03",
-  "date_max": "2026-07-02",
+  "expected_symbols": 503,
+  "symbols": 503,
+  "missing_symbols": [],
+  "rows": 250060,
+  "date_min": "2024-07-08",
+  "date_max": "2026-07-06",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "01-Jul-2026",
+  "spy_holdings_as_of": "02-Jul-2026",
   "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
-    {
-      "name": "EXXONMOBIL HOLDINGS CORP",
-      "ticker": "2670549D",
-      "currency": "USD",
-      "reason": "non_ticker_identifier"
-    },
     {
       "name": "US DOLLAR",
       "ticker": "-",
@@ -35,5 +27,5 @@
       "reason": "contra_bookkeeping_row"
     }
   ],
-  "spy_excluded_count": 3
+  "spy_excluded_count": 2
 }
