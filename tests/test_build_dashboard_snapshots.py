@@ -26,8 +26,6 @@ def test_ntss_series_is_vix3m_minus_vix():
 
 
 def test_build_breadth_matches_canonical_available_history_ema_and_date_refs():
-    from live_stock_signal_app import _calculate_breadth as canonical
-
     symbols = [f"S{i:03}" for i in range(100)]
     days = pd.date_range("2026-01-01", periods=3, freq="D")
     daily = pd.DataFrame(
@@ -41,10 +39,23 @@ def test_build_breadth_matches_canonical_available_history_ema_and_date_refs():
     )
 
     actual = _calculate_breadth(daily, intraday, denominator=100)
-    expected = canonical(daily, intraday, denominator=100)
+    expected = pd.DataFrame(
+        {
+            "above_20": [0.0, 50.0],
+            "above_50": [0.0, 50.0],
+            "above_200": [0.0, 50.0],
+            "above_20_n": [0.0, 100.0],
+            "above_50_n": [0.0, 100.0],
+            "above_200_n": [0.0, 100.0],
+            "strong": [0.0, 50.0],
+            "breakdown": [100.0, 50.0],
+            "pullback": [0.0, 0.0],
+            "recovery": [0.0, 0.0],
+        },
+        index=bars,
+    )
 
     pd.testing.assert_frame_equal(actual, expected)
-    assert actual["above_20"].tolist() == [0.0, 50.0]
 
 
 def test_build_breadth_masks_rows_below_minimum_stock_count():
@@ -62,15 +73,17 @@ def test_build_breadth_masks_rows_below_minimum_stock_count():
 
 
 def test_build_ntss_matches_canonical_90_minute_tolerance():
-    from live_stock_signal_app import _calc_ntss as canonical
-
     source_index = pd.DatetimeIndex(["2026-01-01 12:00:00+00:00"])
     vix = pd.DataFrame({"vix": [15.0], "vix3m": [18.0]}, index=source_index)
     target = pd.DatetimeIndex(
         ["2026-01-01 13:29:00+00:00", "2026-01-01 13:31:00+00:00"]
     )
 
-    pd.testing.assert_series_equal(_calc_ntss(vix, target), canonical(vix, target))
+    result = _calc_ntss(vix, target)
+
+    assert result.iloc[0] == 3.0
+    assert pd.isna(result.iloc[1])
+    assert result.index.equals(target)
 
 
 def test_dashboard_snapshot_merges_universes_and_assigns_weights():
