@@ -57,7 +57,7 @@ def test_refresh_workflow_locks_dependencies_and_publishes_only_snapshots():
     upload = next(step for step in build_steps if "actions/upload-artifact" in step.get("uses", ""))
 
     assert "python scripts/nyse_market_hours.py" in build_commands
-    assert "pip install -r requirements-actions.txt" in build_commands
+    assert "pip install --require-hashes -r requirements-actions.lock" in build_commands
     assert "python scripts/build_dashboard_snapshots.py --output-dir data" in build_commands
     assert upload["with"]["path"].splitlines() == [
         "data/dashboard_snapshot.json",
@@ -67,11 +67,19 @@ def test_refresh_workflow_locks_dependencies_and_publishes_only_snapshots():
     assert "git diff --cached --quiet" in publish_commands
     assert "git add -A" not in publish_commands
     assert "git add ." not in publish_commands
+    validate_index = next(
+        index for index, step in enumerate(publish_steps)
+        if "validate_dashboard_snapshots.py" in step.get("run", "")
+    )
+    commit_index = next(
+        index for index, step in enumerate(publish_steps)
+        if "git add -- data/dashboard_snapshot.json" in step.get("run", "")
+    )
+    assert validate_index < commit_index
 
-    requirements = (Path(__file__).parents[1] / "requirements-actions.txt").read_text()
-    direct = [line for line in requirements.splitlines() if line and not line.startswith("#")]
-    assert direct
-    assert all("==" in line for line in direct)
+    lock = (Path(__file__).parents[1] / "requirements-actions.lock").read_text()
+    assert "--hash=sha256:" in lock
+    assert "exchange-calendars==" in lock
 
 
 def test_nyse_gate_observes_holiday_and_early_close():
@@ -93,6 +101,34 @@ def test_nyse_gate_observes_holiday_and_early_close():
     assert not is_nyse_open(
         datetime.fromisoformat("2026-11-27T18:45:00+00:00"), calendar=calendar
     )
+
+
+def test_nyse_gate_uses_actual_xnys_sessions():
+    from scripts.nyse_market_hours import is_nyse_open
+
+    assert is_nyse_open(datetime.fromisoformat("2026-07-06T14:00:00+00:00"))
+    assert is_nyse_open(datetime.fromisoformat("2026-01-05T15:00:00+00:00"))
+    assert not is_nyse_open(datetime.fromisoformat("2026-07-03T15:00:00+00:00"))
+    assert is_nyse_open(datetime.fromisoformat("2026-11-27T17:45:00+00:00"))
+    assert not is_nyse_open(datetime.fromisoformat("2026-11-27T18:15:00+00:00"))
+
+
+def test_snapshot_pair_validation_requires_schema_and_matching_generation(tmp_path):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    dashboard = tmp_path / "dashboard_snapshot.json"
+    breadth = tmp_path / "breadth_15m.json"
+    dashboard.write_text('{"schema_version":1,"generation_id":"same"}')
+    breadth.write_text('{"schema_version":1,"generation_id":"same"}')
+    validate_snapshot_pair(dashboard, breadth)
+
+    breadth.write_text('{"schema_version":1,"generation_id":"different"}')
+    with pytest.raises(ValueError, match="generation_id"):
+        validate_snapshot_pair(dashboard, breadth)
+
+    breadth.write_text('{"schema_version":2,"generation_id":"same"}')
+    with pytest.raises(ValueError, match="schema_version"):
+        validate_snapshot_pair(dashboard, breadth)
 
 
 def test_ntss_series_is_vix3m_minus_vix():

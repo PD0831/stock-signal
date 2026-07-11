@@ -26,10 +26,10 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
-          cache-dependency-path: requirements-actions.txt
+          cache-dependency-path: requirements-actions.lock
 
       - name: Install locked build dependencies
-        run: python -m pip install -r requirements-actions.txt
+        run: python -m pip install --require-hashes -r requirements-actions.lock
 
       - name: Check NYSE market hours
         id: market-hours
@@ -66,6 +66,11 @@ jobs:
         with:
           name: mvs-dashboard-snapshots
           path: data
+
+      - name: Validate snapshot pair
+        run: >-
+          python scripts/validate_dashboard_snapshots.py
+          data/dashboard_snapshot.json data/breadth_15m.json
 
       - name: Commit updated snapshots
         run: |
