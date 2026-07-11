@@ -30,7 +30,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import os
 
 # ── Config ────────────────────────────────────────────────────────────────────
-NASDAQ100_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
+NASDAQ100_URL = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
 SP500_URL     = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 CACHE_DIR     = Path(os.environ.get("CACHE_DIR", "/tmp"))
 
