@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 import pandas as pd
+import yaml
 
 from scripts.build_dashboard_snapshots import (
     SCHEMA_VERSION,
@@ -17,26 +18,81 @@ from scripts.market_snapshot_data import _calculate_breadth, _calc_ntss, _ntss_s
 from scripts.market_snapshot_data import SnapshotMarketData, daily_close_payload
 
 
-def test_refresh_workflow_has_safe_fifteen_minute_snapshot_contract():
+def _workflow():
     workflow_path = Path(__file__).parents[1] / ".github/workflows/refresh_dashboard.yml"
-
     assert workflow_path.exists(), "snapshot refresh workflow must be checked in"
-    workflow = workflow_path.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    parsed["on"] = parsed.pop(True, parsed.get("on"))
+    return parsed
 
-    assert "workflow_dispatch:" in workflow
-    assert "cron: '*/15 13-21 * * 1-5'" in workflow
-    assert "permissions:\n  contents: write" in workflow
-    assert "group: mvs-dashboard-refresh" in workflow
-    assert "cancel-in-progress: true" in workflow
-    assert "ZoneInfo(\"America/New_York\")" in workflow
-    assert "09:30" in workflow and "16:00" in workflow
-    assert "steps.market-hours.outputs.should_run == 'true'" in workflow
-    assert "python scripts/build_dashboard_snapshots.py --output-dir data" in workflow
-    assert "git add -- data/dashboard_snapshot.json data/breadth_15m.json" in workflow
-    assert "git diff --cached --quiet" in workflow
-    assert "git push origin HEAD:${GITHUB_REF_NAME}" in workflow
-    assert "git add -A" not in workflow
-    assert "git add ." not in workflow
+
+def test_refresh_workflow_separates_read_only_build_from_write_publish():
+    workflow = _workflow()
+    build = workflow["jobs"]["build"]
+    publish = workflow["jobs"]["publish"]
+
+    assert workflow["on"]["workflow_dispatch"] is None
+    assert workflow["on"]["schedule"] == [{"cron": "*/15 13-21 * * 1-5"}]
+    assert workflow["concurrency"] == {
+        "group": "mvs-dashboard-refresh",
+        "cancel-in-progress": True,
+    }
+    assert build["permissions"] == {"contents": "read"}
+    assert publish["permissions"] == {"contents": "write"}
+    assert publish["needs"] == "build"
+    assert build["outputs"]["should_run"] == "${{ steps.market-hours.outputs.should_run }}"
+    assert publish["if"] == "needs.build.outputs.should_run == 'true'"
+
+    build_checkout = next(step for step in build["steps"] if "actions/checkout" in step.get("uses", ""))
+    assert build_checkout["with"]["persist-credentials"] is False
+    assert all("@v" not in step.get("uses", "") for job in (build, publish) for step in job["steps"])
+
+
+def test_refresh_workflow_locks_dependencies_and_publishes_only_snapshots():
+    workflow = _workflow()
+    build_steps = workflow["jobs"]["build"]["steps"]
+    publish_steps = workflow["jobs"]["publish"]["steps"]
+    build_commands = "\n".join(step.get("run", "") for step in build_steps)
+    publish_commands = "\n".join(step.get("run", "") for step in publish_steps)
+    upload = next(step for step in build_steps if "actions/upload-artifact" in step.get("uses", ""))
+
+    assert "python scripts/nyse_market_hours.py" in build_commands
+    assert "pip install -r requirements-actions.txt" in build_commands
+    assert "python scripts/build_dashboard_snapshots.py --output-dir data" in build_commands
+    assert upload["with"]["path"].splitlines() == [
+        "data/dashboard_snapshot.json",
+        "data/breadth_15m.json",
+    ]
+    assert "git add -- data/dashboard_snapshot.json data/breadth_15m.json" in publish_commands
+    assert "git diff --cached --quiet" in publish_commands
+    assert "git add -A" not in publish_commands
+    assert "git add ." not in publish_commands
+
+    requirements = (Path(__file__).parents[1] / "requirements-actions.txt").read_text()
+    direct = [line for line in requirements.splitlines() if line and not line.startswith("#")]
+    assert direct
+    assert all("==" in line for line in direct)
+
+
+def test_nyse_gate_observes_holiday_and_early_close():
+    from scripts.nyse_market_hours import is_nyse_open
+
+    class FakeNYSECalendar:
+        def is_open_on_minute(self, timestamp):
+            holiday = timestamp.date().isoformat() == "2026-07-03"
+            early_close = timestamp.date().isoformat() == "2026-11-27"
+            return not holiday and (not early_close or timestamp.hour < 18)
+
+    calendar = FakeNYSECalendar()
+    assert not is_nyse_open(
+        datetime.fromisoformat("2026-07-03T15:00:00+00:00"), calendar=calendar
+    )
+    assert is_nyse_open(
+        datetime.fromisoformat("2026-11-27T17:45:00+00:00"), calendar=calendar
+    )
+    assert not is_nyse_open(
+        datetime.fromisoformat("2026-11-27T18:45:00+00:00"), calendar=calendar
+    )
 
 
 def test_ntss_series_is_vix3m_minus_vix():

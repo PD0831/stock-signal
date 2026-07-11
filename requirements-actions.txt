@@ -1,0 +1,8 @@
+# Direct dependencies for the snapshot-building GitHub Action.
+exchange-calendars==4.11.3
+html5lib==1.1
+lxml==6.0.2
+numpy==1.26.4
+pandas==2.3.3
+requests==2.32.5
+yfinance==1.1.0
