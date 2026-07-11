@@ -13,6 +13,7 @@ from scripts.build_dashboard_snapshots import (
     run,
 )
 from scripts.market_snapshot_data import _calculate_breadth, _calc_ntss, _ntss_series
+from scripts.market_snapshot_data import SnapshotMarketData
 
 
 def test_ntss_series_is_vix3m_minus_vix():
@@ -47,6 +48,9 @@ def test_build_breadth_matches_canonical_available_history_ema_and_date_refs():
             "above_20_n": [0.0, 100.0],
             "above_50_n": [0.0, 100.0],
             "above_200_n": [0.0, 100.0],
+            "valid_20_n": [100.0, 100.0],
+            "valid_50_n": [100.0, 100.0],
+            "valid_200_n": [100.0, 100.0],
             "strong": [0.0, 50.0],
             "breakdown": [100.0, 50.0],
             "pullback": [0.0, 0.0],
@@ -84,6 +88,46 @@ def test_build_ntss_matches_canonical_90_minute_tolerance():
     assert result.iloc[0] == 3.0
     assert pd.isna(result.iloc[1])
     assert result.index.equals(target)
+
+
+def test_provider_reuses_sp500_daily_download_for_signals_and_breadth(monkeypatch):
+    symbols = [f"S{i:03}" for i in range(100)]
+    days = pd.date_range("2025-01-01", periods=201, freq="D")
+    bars = pd.DatetimeIndex(["2026-01-01 15:00:00+00:00"])
+    daily_calls = 0
+
+    def fake_download(requested, *, period, interval, fields):
+        nonlocal daily_calls
+        if interval == "1d":
+            daily_calls += 1
+            return {s: pd.DataFrame({"Close": range(1, 202), "Volume": [1000] * 201}, index=days) for s in requested}
+        if requested == ["^VIX", "^VIX3M"]:
+            return {}
+        return {s: pd.DataFrame({"Close": [250.0]}, index=bars) for s in requested}
+
+    provider = SnapshotMarketData()
+    monkeypatch.setattr(provider, "symbols", lambda universe: symbols)
+    monkeypatch.setattr("scripts.market_snapshot_data._download_fields", fake_download)
+
+    provider.compute_signals("sp500")
+    result = provider.compute_breadth()
+
+    assert daily_calls == 1
+    assert {"a20_n", "a50_n", "a200_n", "valid_20_n", "valid_50_n", "valid_200_n"} <= result["records"][0].keys()
+    assert set(result["daily_close"]) == {"current", "previous"}
+
+
+def test_provider_reports_sp500_fallback_source_and_error(monkeypatch):
+    monkeypatch.setattr("scripts.market_snapshot_data.get_sp500", lambda: (_ for _ in ()).throw(RuntimeError("SPDR unavailable")))
+    monkeypatch.setattr("scripts.market_snapshot_data._wikipedia_symbols", lambda universe: ["AAPL"])
+    provider = SnapshotMarketData()
+
+    assert provider.symbols("sp500") == ["AAPL"]
+    assert provider._universe_meta["sp500"] == {
+        "universe_source": "fallback_sp500_wikipedia",
+        "universe_warning": "Primary SPY holdings source failed; using Wikipedia.",
+        "universe_error": "SPDR unavailable",
+    }
 
 
 def test_dashboard_snapshot_merges_universes_and_assigns_weights():
@@ -321,6 +365,32 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
     for name in ("dashboard_snapshot.json", "breadth_15m.json"):
         payload = json.loads((tmp_path / name).read_text(encoding="utf-8"))
         assert "raw_prices" not in json.dumps(payload)
+    assert dashboard["generation_id"] == breadth["generation_id"]
+
+
+def test_publish_pair_rolls_back_first_file_when_second_replace_fails(tmp_path, monkeypatch):
+    from scripts.build_dashboard_snapshots import _publish_pair
+
+    first = tmp_path / "dashboard_snapshot.json"
+    second = tmp_path / "breadth_15m.json"
+    first.write_text('{"old":1}', encoding="utf-8")
+    second.write_text('{"old":2}', encoding="utf-8")
+    original_replace = type(first).replace
+    calls = 0
+
+    def fail_second(self, target):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("second replace failed")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(type(first), "replace", fail_second)
+    with pytest.raises(OSError, match="second replace"):
+        _publish_pair(tmp_path, {first.name: {"new": 1}, second.name: {"new": 2}})
+
+    assert json.loads(first.read_text()) == {"old": 1}
+    assert json.loads(second.read_text()) == {"old": 2}
 
 
 @pytest.mark.parametrize("invalid_part", ["dashboard", "breadth"])

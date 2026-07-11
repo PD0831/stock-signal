@@ -135,6 +135,10 @@ def _count_above(prices: pd.DataFrame, reference: pd.DataFrame, min_n: int) -> p
     return counts
 
 
+def _valid_count(prices: pd.DataFrame, reference: pd.DataFrame) -> pd.Series:
+    return (prices.notna() & reference.notna()).sum(axis=1).astype(float)
+
+
 def _pct_above(prices: pd.DataFrame, reference: pd.DataFrame, min_n: int, denominator: int | None) -> pd.Series:
     valid = prices.notna() & reference.notna()
     divisor = denominator if denominator and denominator > 0 else valid.sum(axis=1).clip(lower=1)
@@ -163,6 +167,9 @@ def _calculate_breadth(daily: pd.DataFrame, intraday: pd.DataFrame, denominator:
         "above_20_n": _count_above(prices, references[20], BREADTH_MIN_STOCKS),
         "above_50_n": _count_above(prices, references[50], BREADTH_MIN_STOCKS),
         "above_200_n": _count_above(prices, references[200], BREADTH_MIN_STOCKS),
+        "valid_20_n": _valid_count(prices, references[20]),
+        "valid_50_n": _valid_count(prices, references[50]),
+        "valid_200_n": _valid_count(prices, references[200]),
         "strong": all_ma.min(axis=1).round(2),
         "breakdown": (100 - all_ma.max(axis=1)).round(2),
         "pullback": (short_ma.min(axis=1) - all_ma.min(axis=1)).round(2),
@@ -182,18 +189,61 @@ def _calc_ntss(vix: pd.DataFrame, index: pd.DatetimeIndex) -> pd.Series:
     return ntss.reindex(index, method="nearest", tolerance=pd.Timedelta("90min"))
 
 
+def _record(timestamp: object, row: pd.Series, label: str | None = None) -> dict[str, Any]:
+    value = lambda key: None if key not in row or pd.isna(row[key]) else round(float(row[key]), 3)
+    count = lambda key: None if key not in row or pd.isna(row[key]) else int(round(float(row[key])))
+    return {"t": label or pd.Timestamp(timestamp).isoformat(), "s": value("strong"), "bd": value("breakdown"), "pb": value("pullback"), "rc": value("recovery"), "a20": value("above_20"), "a50": value("above_50"), "a200": value("above_200"), "a20_n": count("above_20_n"), "a50_n": count("above_50_n"), "a200_n": count("above_200_n"), "valid_20_n": count("valid_20_n"), "valid_50_n": count("valid_50_n"), "valid_200_n": count("valid_200_n"), "mom": value("momentum"), "mid": value("ntss"), "phase_code": _phase(value("strong"), value("breakdown"))}
+
+
+def _calculate_daily_breadth(daily: pd.DataFrame, denominator: int) -> pd.DataFrame:
+    refs = {window: daily.rolling(window, min_periods=1).mean() for window in (20, 50, 200)}
+    pct = {window: _pct_above(daily, refs[window], BREADTH_MIN_STOCKS, denominator) for window in refs}
+    all_ma, short_ma = pd.concat(list(pct.values()), axis=1), pd.concat([pct[20], pct[50]], axis=1)
+    result = pd.DataFrame({"above_20": pct[20].round(2), "above_50": pct[50].round(2), "above_200": pct[200].round(2), "above_20_n": _count_above(daily, refs[20], BREADTH_MIN_STOCKS), "above_50_n": _count_above(daily, refs[50], BREADTH_MIN_STOCKS), "above_200_n": _count_above(daily, refs[200], BREADTH_MIN_STOCKS), "valid_20_n": _valid_count(daily, refs[20]), "valid_50_n": _valid_count(daily, refs[50]), "valid_200_n": _valid_count(daily, refs[200]), "strong": all_ma.min(axis=1).round(2), "breakdown": (100-all_ma.max(axis=1)).round(2), "pullback": (short_ma.min(axis=1)-all_ma.min(axis=1)).round(2), "recovery": (all_ma.max(axis=1)-short_ma.max(axis=1)).round(2)}, index=daily.index)
+    result["momentum"] = _calc_momentum(result)
+    return result
+
+
+def daily_close_payload(daily: pd.DataFrame, denominator: int) -> dict[str, Any] | None:
+    valid = _calculate_daily_breadth(daily, denominator).dropna(subset=["strong", "breakdown"])
+    if valid.empty: return None
+    current_time = valid.index[-1]
+    payload = {"current": _record(current_time, valid.iloc[-1], f"{current_time:%Y-%m-%d} EOD")}
+    if len(valid) > 1:
+        previous_time = valid.index[-2]
+        payload["previous"] = _record(previous_time, valid.iloc[-2], f"{previous_time:%Y-%m-%d} EOD")
+    return payload
+
+
 class SnapshotMarketData:
+    def __init__(self) -> None:
+        self._symbols: dict[str, list[str]] = {}
+        self._universe_meta: dict[str, dict[str, Any]] = {}
+        self._daily: dict[str, dict[str, pd.DataFrame]] = {}
+
     def symbols(self, universe: str) -> list[str]:
+        if universe in self._symbols:
+            return self._symbols[universe]
         if universe == "sp500":
             try:
-                return get_sp500()[0]
-            except Exception:
-                pass
-        return _wikipedia_symbols(universe)
+                symbols, diagnostics = get_sp500()
+                self._symbols[universe] = symbols
+                self._universe_meta[universe] = diagnostics
+                return symbols
+            except Exception as exc:
+                symbols = _wikipedia_symbols(universe)
+                self._symbols[universe] = symbols
+                self._universe_meta[universe] = {"universe_source": "fallback_sp500_wikipedia", "universe_warning": "Primary SPY holdings source failed; using Wikipedia.", "universe_error": str(exc)}
+                return symbols
+        symbols = _wikipedia_symbols(universe)
+        self._symbols[universe] = symbols
+        self._universe_meta[universe] = {"universe_source": "wikipedia_nasdaq100"}
+        return symbols
 
     def compute_signals(self, universe: str) -> dict[str, Any]:
         symbols = self.symbols(universe)
-        history = _download_fields(symbols, period="18mo", interval="1d", fields=("Close", "Volume"))
+        history = _download_fields(symbols, period="2y", interval="1d", fields=("Close", "Volume"))
+        self._daily[universe] = history
         rows = []
         failed = set(symbols) - set(history)
         for symbol, frame in history.items():
@@ -210,11 +260,11 @@ class SnapshotMarketData:
         pool = _unique(rows, 10)
         ranked = sorted((row for row in pool if row["distance_pct"] is not None), key=lambda row: row["distance_pct"], reverse=True)
         picks = [{**row, "rank": rank} for rank, row in enumerate(ranked[:3], 1)]
-        return {"universe": universe, "valid_count": len(rows), "failed_count": len(failed), "ma200_selected": picks}
+        return {"universe": universe, "valid_count": len(rows), "failed_count": len(failed), "ma200_selected": picks, **self._universe_meta.get(universe, {})}
 
     def compute_breadth(self) -> dict[str, Any]:
         symbols = self.symbols("sp500")
-        daily = _download_fields(symbols, period="2y", interval="1d", fields=("Close",))
+        daily = self._daily.get("sp500") or _download_fields(symbols, period="2y", interval="1d", fields=("Close", "Volume"))
         intraday = _download_fields(symbols, period="5d", interval="15m", fields=("Close",))
         common = sorted(set(daily) & set(intraday))
         if not common:
@@ -229,8 +279,5 @@ class SnapshotMarketData:
             vix = pd.concat([vix_history["^VIX"]["Close"].rename("vix"), vix_history["^VIX3M"]["Close"].rename("vix3m")], axis=1)
         breadth["ntss"] = _calc_ntss(vix, breadth.index)
         records = []
-        for timestamp, row in breadth.iterrows():
-            value = lambda key: None if pd.isna(row[key]) else round(float(row[key]), 3)
-            record = {"t": pd.Timestamp(timestamp).isoformat(), "s": value("strong"), "bd": value("breakdown"), "pb": value("pullback"), "rc": value("recovery"), "a20": value("above_20"), "a50": value("above_50"), "a200": value("above_200"), "mom": value("momentum"), "mid": value("ntss"), "phase_code": _phase(value("strong"), value("breakdown"))}
-            records.append(record)
-        return {"records": records, "n_stocks": len(symbols), "n_valid_15m": len(common), "n_valid_hourly": len(common)}
+        for timestamp, row in breadth.iterrows(): records.append(_record(timestamp, row))
+        return {"records": records, "daily_close": daily_close_payload(daily_wide, len(symbols)), "n_stocks": len(symbols), "n_valid_15m": len(common), "n_valid_hourly": len(common), **self._universe_meta.get("sp500", {})}

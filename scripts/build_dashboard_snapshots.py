@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import argparse
+import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,7 +92,9 @@ def build_breadth_snapshot(
 
 def write_json_atomic(path: str | os.PathLike[str], payload: Any) -> None:
     """Serialize strictly, then replace *path* with a complete sibling file."""
-    serialized = json.dumps(payload, allow_nan=False, ensure_ascii=False, indent=2) + "\n"
+    serialized = json.dumps(
+        payload, allow_nan=False, ensure_ascii=False, separators=(",", ":")
+    ) + "\n"
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -122,7 +125,7 @@ class MarketDataProvider(Protocol):
 
 
 def _json_bytes(payload: Any) -> bytes:
-    return (json.dumps(payload, allow_nan=False, ensure_ascii=False, indent=2) + "\n").encode()
+    return (json.dumps(payload, allow_nan=False, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
 
 
 def _publish_pair(output_dir: Path, payloads: Mapping[str, Any]) -> None:
@@ -167,11 +170,15 @@ def _publish_pair(output_dir: Path, payloads: Mapping[str, Any]) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def _quality(signals: Mapping[str, Any]) -> dict[str, int]:
-    return {
+def _quality(signals: Mapping[str, Any]) -> dict[str, Any]:
+    quality = {
         "valid_count": int(signals.get("valid_count", 0)),
         "failed_count": int(signals.get("failed_count", 0)),
     }
+    for key in ("universe_source", "universe_warning", "universe_error"):
+        if signals.get(key) is not None:
+            quality[key] = signals[key]
+    return quality
 
 
 def run(
@@ -204,15 +211,24 @@ def run(
     )
     expected = int(raw_breadth.get("n_stocks", 0))
     valid = int(raw_breadth.get("n_valid_hourly", raw_breadth.get("n_valid_15m", 0)))
+    breadth_quality = {
+        "expected_count": expected,
+        "valid_count": valid,
+        "failed_count": max(expected - valid, 0),
+    }
+    for key in ("universe_source", "universe_warning", "universe_error"):
+        if raw_breadth.get(key) is not None:
+            breadth_quality[key] = raw_breadth[key]
     breadth = build_breadth_snapshot(
         breadth_records,
         generated_at=generated_at,
-        quality={
-            "expected_count": expected,
-            "valid_count": valid,
-            "failed_count": max(expected - valid, 0),
-        },
+        quality=breadth_quality,
     )
+    if raw_breadth.get("daily_close") is not None:
+        breadth["daily_close"] = raw_breadth["daily_close"]
+    generation_id = f"{generated_at.isoformat()}-{uuid.uuid4().hex[:12]}"
+    dashboard["generation_id"] = generation_id
+    breadth["generation_id"] = generation_id
     _publish_pair(
         Path(output_dir),
         {"dashboard_snapshot.json": dashboard, "breadth_15m.json": breadth},
