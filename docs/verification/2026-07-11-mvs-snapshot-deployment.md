@@ -9,10 +9,16 @@
   certificate.
 - Pair validation: schema version 1 and generation ID
   `2026-07-11T17:27:04.511989+00:00-bf6f80e48a79` match.
-- Memory smoke: one network-guarded uvicorn worker, 45 iterations over all four
-  public routes; startup RSS 67.67 MiB, peak/final RSS 68.98 MiB, growth 1.31 MiB.
-  The intentional external-connect probe was blocked, and the route run recorded
-  no attempted egress.
+- Memory smoke: one network-guarded uvicorn worker, 50 iterations over all four
+  public routes; startup RSS 67.55 MiB, peak/final RSS 69.00 MiB, peak and final
+  growth 1.45 MiB. The growth limit is evaluated against peak RSS, not only the
+  final sample. Each run uses and removes a unique temporary egress log.
+- Network guard coverage: non-loopback TCP `connect`, `connect_ex` and
+  `create_connection`; UDP `sendto` and platform-supported `sendmsg`; connected
+  `send`/`sendall`; and public-hostname `getaddrinfo`/DNS are denied and audited.
+  IPv4/IPv6 loopback and Unix sockets remain available. Adversarial probes for
+  every path were blocked, while normal loopback HTTP completed successfully and
+  recorded no attempted egress.
 - Automated verification: 98 tests in `tests/` and 18 root app tests passed;
   strict JSON and pair validation passed. The display import loaded none of
   pandas, numpy, or yfinance.

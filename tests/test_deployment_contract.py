@@ -38,10 +38,10 @@ def test_memory_smoke_script_exists_and_checks_all_public_routes():
     assert "network_guard.py" in script
 
 
-def test_network_guard_blocks_and_records_intentional_external_connect(tmp_path):
+def test_network_guard_blocks_and_records_adversarial_egress_paths(tmp_path):
     log = tmp_path / "blocked-egress.jsonl"
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "network_guard.py"), "--probe-external"],
+        [sys.executable, str(ROOT / "scripts" / "network_guard.py"), "--probe-all"],
         env={"EGRESS_LOG": str(log)},
         text=True,
         capture_output=True,
@@ -50,7 +50,11 @@ def test_network_guard_blocks_and_records_intentional_external_connect(tmp_path)
 
     assert result.returncode == 0, result.stderr
     attempts = [json.loads(line) for line in log.read_text().splitlines()]
-    assert attempts and attempts[-1]["host"] == "203.0.113.1"
+    operations = {attempt["operation"] for attempt in attempts}
+    assert {"connect", "connect_ex", "create_connection", "sendto", "send", "sendall", "getaddrinfo"} <= operations
+    if hasattr(__import__("socket").socket, "sendmsg"):
+        assert "sendmsg" in operations
+    assert {attempt["host"] for attempt in attempts} >= {"203.0.113.1", "example.com"}
 
 
 def test_network_guarded_memory_smoke_serves_all_routes_without_egress():
@@ -65,3 +69,5 @@ def test_network_guarded_memory_smoke_serves_all_routes_without_egress():
     assert result.returncode == 0, result.stderr
     assert "startup_rss_mib=" in result.stdout
     assert "peak_rss_mib=" in result.stdout
+    assert "peak_growth_mib=" in result.stdout
+    assert "final_growth_mib=" in result.stdout
