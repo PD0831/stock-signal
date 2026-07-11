@@ -51,6 +51,8 @@ def _validate_dashboard(payload: dict[str, Any]) -> None:
             raise SnapshotUnavailable(f"dashboard: buy_targets[{index}].symbol is not a safe ticker")
         if target["universe"] not in {"nasdaq100", "sp500"}:
             raise SnapshotUnavailable(f"dashboard: buy_targets[{index}].universe is invalid")
+        if target["rank"] <= 0:
+            raise SnapshotUnavailable(f"dashboard: buy_targets[{index}].rank must be positive")
 
 
 def _validate_breadth(payload: dict[str, Any]) -> None:

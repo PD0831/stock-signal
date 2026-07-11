@@ -87,6 +87,14 @@ def validate_snapshot_pair(dashboard_path: Path, breadth_path: Path) -> None:
             raise ValueError(f"{dashboard_path}: buy_targets[{index}].symbol is invalid")
         if target.get("universe") not in {"nasdaq100", "sp500"}:
             raise ValueError(f"{dashboard_path}: buy_targets[{index}].universe is invalid")
+        rank = target.get("rank")
+        if type(rank) is not int or rank <= 0:
+            raise ValueError(f"{dashboard_path}: buy_targets[{index}].rank must be a positive integer")
+        weight = target.get("target_weight_pct")
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool):
+            raise ValueError(
+                f"{dashboard_path}: buy_targets[{index}].target_weight_pct must be a number"
+            )
     _require_type(breadth, "records", list, breadth_path)
     _require_type(breadth, "quality", dict, breadth_path)
     _validate_quality(breadth["quality"], breadth_path)

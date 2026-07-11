@@ -294,6 +294,43 @@ def test_publication_validator_rejects_non_finite_json(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (lambda target: target.pop("rank"), "rank"),
+        (lambda target: target.pop("target_weight_pct"), "target_weight_pct"),
+        (lambda target: target.update(rank=True), "rank"),
+        (lambda target: target.update(target_weight_pct=False), "target_weight_pct"),
+        (lambda target: target.update(rank=0), "rank"),
+    ],
+)
+def test_publication_validator_rejects_invalid_required_target_fields(
+    tmp_path, mutation, expected
+):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    quality = {"fresh_until": generated_at, "session_status": "closed"}
+    target = {
+        "symbol": "AAPL", "universe": "sp500", "rank": 1,
+        "target_weight_pct": 60,
+    }
+    mutation(target)
+    dashboard = tmp_path / "dashboard.json"
+    breadth = tmp_path / "breadth.json"
+    dashboard.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "buy_targets": [target], "market_status": {}, "quality": quality,
+    }))
+    breadth.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "records": [], "quality": quality, "latest_transition": None,
+    }))
+
+    with pytest.raises(ValueError, match=expected):
+        validate_snapshot_pair(dashboard, breadth)
+
+
+@pytest.mark.parametrize(
     ("artifact", "field"),
     [("dashboard", "buy_targets"), ("breadth", "latest_transition")],
 )
