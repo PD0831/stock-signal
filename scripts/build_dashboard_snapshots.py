@@ -8,13 +8,48 @@ import tempfile
 import argparse
 import uuid
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol
 
 
 SCHEMA_VERSION = 1
 WEIGHTS = (60, 20, 20)
+
+
+def snapshot_session_metadata(
+    generated_at: datetime, *, calendar: Any = None
+) -> dict[str, str]:
+    """Describe when this artifact is next expected to be refreshed."""
+    if generated_at.tzinfo is None:
+        raise ValueError("generated_at must be timezone-aware")
+    probe: Any = generated_at.astimezone(timezone.utc)
+    if calendar is None:
+        import exchange_calendars as xcals
+        import pandas as pd
+
+        calendar = xcals.get_calendar("XNYS")
+        probe = pd.Timestamp(probe)
+    is_open = bool(calendar.is_open_on_minute(probe))
+    if is_open:
+        candidate = generated_at.astimezone(timezone.utc) + timedelta(minutes=30)
+        candidate_probe = type(probe)(candidate) if type(probe) is not datetime else candidate
+        if calendar.is_open_on_minute(candidate_probe):
+            fresh_until = candidate
+        else:
+            next_open = calendar.next_open(probe)
+            if hasattr(next_open, "to_pydatetime"):
+                next_open = next_open.to_pydatetime()
+            fresh_until = next_open.astimezone(timezone.utc) + timedelta(minutes=30)
+    else:
+        next_open = calendar.next_open(probe)
+        if hasattr(next_open, "to_pydatetime"):
+            next_open = next_open.to_pydatetime()
+        fresh_until = next_open.astimezone(timezone.utc) + timedelta(minutes=30)
+    return {
+        "session_status": "open" if is_open else "closed",
+        "fresh_until": fresh_until.isoformat(),
+    }
 
 
 def _timestamp(value: datetime) -> str:
@@ -191,6 +226,7 @@ def run(
     if provider is None:
         provider = YFinanceMarketDataProvider()
     generated_at = generated_at or datetime.now(timezone.utc)
+    freshness = snapshot_session_metadata(generated_at)
     signals = {
         universe: provider.compute_signals(universe)
         for universe in ("nasdaq100", "sp500")
@@ -207,7 +243,10 @@ def run(
         {name: result.get("ma200_selected", []) for name, result in signals.items()},
         generated_at=generated_at,
         market_status=market_status,
-        quality={name: _quality(result) for name, result in signals.items()},
+        quality={
+            **{name: _quality(result) for name, result in signals.items()},
+            **freshness,
+        },
     )
     expected = int(raw_breadth.get("n_stocks", 0))
     valid = int(raw_breadth.get("n_valid_hourly", raw_breadth.get("n_valid_15m", 0)))
@@ -215,6 +254,7 @@ def run(
         "expected_count": expected,
         "valid_count": valid,
         "failed_count": max(expected - valid, 0),
+        **freshness,
     }
     for key in ("universe_source", "universe_warning", "universe_error"):
         if raw_breadth.get(key) is not None:

@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -46,6 +47,10 @@ def _validate_dashboard(payload: dict[str, Any]) -> None:
             if not isinstance(target.get(field), expected) or isinstance(target.get(field), bool):
                 label = expected.__name__ if isinstance(expected, type) else "number"
                 raise SnapshotUnavailable(f"dashboard: buy_targets[{index}].{field} must be {label}")
+        if not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,9}", target["symbol"]):
+            raise SnapshotUnavailable(f"dashboard: buy_targets[{index}].symbol is not a safe ticker")
+        if target["universe"] not in {"nasdaq100", "sp500"}:
+            raise SnapshotUnavailable(f"dashboard: buy_targets[{index}].universe is invalid")
 
 
 def _validate_breadth(payload: dict[str, Any]) -> None:
@@ -74,7 +79,12 @@ def _decode_snapshot(path: Path, name: str) -> dict[str, Any]:
     if cached is not None and cached[:2] == cache_key:
         return copy.deepcopy(cached[2])
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                SnapshotUnavailable(f"{name}: numeric value {value} is not finite")
+            ),
+        )
     except (OSError, json.JSONDecodeError) as exc:
         raise SnapshotUnavailable(f"{name}: invalid JSON snapshot: {exc}") from exc
     if not isinstance(payload, dict):
@@ -94,7 +104,11 @@ def _decode_snapshot(path: Path, name: str) -> dict[str, Any]:
         raise SnapshotUnavailable(f"{name}: generated_at is not ISO-8601") from exc
     if parsed.tzinfo is None:
         raise SnapshotUnavailable(f"{name}: generated_at must include a timezone")
+    if parsed.astimezone(timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=5):
+        raise SnapshotUnavailable(f"{name}: generated_at is implausibly far in the future")
     (_validate_dashboard if name == "dashboard" else _validate_breadth)(payload)
+    _validate_quality(payload["quality"], name)
+    _require_finite_numbers(payload, name)
     _snapshot_cache[path] = (*cache_key, payload)
     return copy.deepcopy(payload)
 
@@ -109,27 +123,40 @@ def _snapshot_pair() -> dict[str, dict[str, Any]]:
     return pair
 
 
-def _is_stale(generated_at: str, now: datetime | None = None) -> bool:
-    generated = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
-    current = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("America/New_York"))
-    market_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
-    if current.weekday() < 5 and market_open <= current <= market_close:
-        expected = current
-    else:
-        expected = market_close
-        if current.weekday() < 5 and current < market_open:
-            expected -= timedelta(days=1)
-        while expected.weekday() >= 5:
-            expected -= timedelta(days=1)
-    return expected.astimezone(timezone.utc) - generated.astimezone(timezone.utc) > timedelta(minutes=30)
+def _validate_quality(quality: dict[str, Any], name: str) -> None:
+    fresh_until = _require(quality, "fresh_until", str, f"{name}.quality")
+    session_status = _require(quality, "session_status", str, f"{name}.quality")
+    if session_status not in {"open", "closed"}:
+        raise SnapshotUnavailable(f"{name}.quality: session_status must be open or closed")
+    try:
+        deadline = datetime.fromisoformat(fresh_until.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SnapshotUnavailable(f"{name}.quality: fresh_until is not ISO-8601") from exc
+    if deadline.tzinfo is None:
+        raise SnapshotUnavailable(f"{name}.quality: fresh_until must include a timezone")
+
+
+def _require_finite_numbers(value: Any, path: str) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise SnapshotUnavailable(f"{path}: numeric value must be finite")
+    if isinstance(value, dict):
+        for key, child in value.items():
+            _require_finite_numbers(child, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _require_finite_numbers(child, f"{path}[{index}]")
+
+
+def _is_stale(payload: dict[str, Any], now: datetime | None = None) -> bool:
+    fresh_until = datetime.fromisoformat(payload["quality"]["fresh_until"].replace("Z", "+00:00"))
+    return (now or datetime.now(timezone.utc)).astimezone(timezone.utc) > fresh_until.astimezone(timezone.utc)
 
 
 def load_snapshot(name: str) -> dict[str, Any]:
     if name not in _SNAPSHOT_FILES:
         raise SnapshotUnavailable(f"unknown snapshot {name!r}")
     payload = _snapshot_pair()[name]
-    payload["stale"] = _is_stale(payload["generated_at"])
+    payload["stale"] = _is_stale(payload)
     return payload
 
 

@@ -7,23 +7,25 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from scripts.build_dashboard_snapshots import build_dashboard_snapshot, build_breadth_snapshot
 
 
 def _write_pair(tmp_path, *, generated_at=None, schema_version=1, mismatch=False):
     generated_at = generated_at or datetime.now(timezone.utc).isoformat()
+    fresh_until = (datetime.fromisoformat(generated_at) + timedelta(hours=1)).isoformat()
     dashboard = {
         "schema_version": schema_version,
         "generation_id": "generation-a",
         "generated_at": generated_at,
         "market_status": {"phase_code": "B"},
-        "quality": {"valid_count": 500},
+        "quality": {"valid_count": 500, "fresh_until": fresh_until, "session_status": "open"},
         "buy_targets": [],
     }
     breadth = {
         "schema_version": schema_version,
         "generation_id": "generation-b" if mismatch else "generation-a",
         "generated_at": generated_at,
-        "quality": {"valid_count": 500},
+        "quality": {"valid_count": 500, "fresh_until": fresh_until, "session_status": "open"},
         "records": [],
         "latest_transition": None,
     }
@@ -74,6 +76,17 @@ def test_stale_snapshot_remains_available(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["stale"] is True
     assert response.json()["generated_at"] == generated_at
+
+
+def test_future_generated_at_is_unavailable(tmp_path, monkeypatch):
+    generated_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    _write_pair(tmp_path, generated_at=generated_at)
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    response = TestClient(app_module.app).get("/api/signals")
+
+    assert response.status_code == 503
+    assert "future" in response.json()["error"].lower()
 
 
 def test_incompatible_schema_is_unavailable_but_html_renders(tmp_path, monkeypatch):
@@ -143,7 +156,59 @@ def test_invalid_breadth_record_is_unavailable(tmp_path, monkeypatch):
     assert "record" in response.json()["error"]
 
 
+def test_non_finite_json_is_unavailable(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    path = tmp_path / "breadth_15m.json"
+    path.write_text(path.read_text().replace('"records": []', '"records": [{"t":"now","s":NaN}]'))
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    response = TestClient(app_module.app).get("/api/breadth")
+
+    assert response.status_code == 503
+    assert "finite" in response.json()["error"].lower()
+
+
+def test_malicious_target_is_rejected(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    path = tmp_path / "dashboard_snapshot.json"
+    payload = json.loads(path.read_text())
+    payload["buy_targets"] = [{
+        "symbol": "<img src=x onerror=alert(1)>", "universe": "sp500",
+        "rank": 1, "target_weight_pct": 60,
+    }]
+    path.write_text(json.dumps(payload))
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    assert TestClient(app_module.app).get("/api/signals").status_code == 503
+
+
 def test_web_module_has_no_live_market_or_network_code():
     source = (Path(__file__).parent / "live_stock_signal_app.py").read_text()
     for forbidden in ("yfinance", "requests", "pandas", "numpy", "threading", "socket", "compute_signals", "compute_breadth"):
         assert forbidden not in source
+
+
+def test_actual_builder_payload_is_served_and_homepage_consumes_buy_targets(tmp_path, monkeypatch):
+    now = datetime.now(timezone.utc)
+    quality = {
+        "fresh_until": (now + timedelta(hours=1)).isoformat(),
+        "session_status": "open",
+    }
+    dashboard = build_dashboard_snapshot(
+        {"sp500": [{"symbol": "AAPL", "rank": 1}]},
+        generated_at=now, market_status={}, quality=quality,
+    )
+    breadth = build_breadth_snapshot([], generated_at=now, quality=quality)
+    dashboard["generation_id"] = breadth["generation_id"] = "integration"
+    (tmp_path / "dashboard_snapshot.json").write_text(json.dumps(dashboard))
+    (tmp_path / "breadth_15m.json").write_text(json.dumps(breadth))
+    app_module = _import_app(monkeypatch, tmp_path)
+    client = TestClient(app_module.app)
+
+    assert client.get("/api/signals").status_code == 200
+    html = client.get("/").text
+    assert "data.buy_targets" in html
+    assert "data.nasdaq100" not in html
+    assert "data.sp500" not in html
+    assert "innerHTML" not in html
+    assert "textContent" in html

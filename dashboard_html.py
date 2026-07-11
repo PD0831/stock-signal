@@ -210,7 +210,7 @@ SIGNALS_HTML = r"""<!doctype html>
         </div>
         <div class="msg-row" id="nasdaqMaMsg">正在加载…</div>
         <table id="nasdaqMaTbl" style="display:none">
-          <thead><tr><th>股票</th><th>#</th><th>收盘价</th><th>MA200</th><th>超出幅度 ↑</th><th>63日均量</th></tr></thead>
+          <thead><tr><th>标的</th><th>排名</th><th>收盘价</th><th>MA200</th><th>距 MA200</th><th>权重</th></tr></thead>
           <tbody id="nasdaqMaBody"></tbody>
         </table>
         <div class="card-note">ADV Top10 中选距 MA200 最远的 3 只 · 动量最强但回撤更大</div>
@@ -254,7 +254,7 @@ SIGNALS_HTML = r"""<!doctype html>
         </div>
         <div class="msg-row" id="sp500MaMsg">正在加载…</div>
         <table id="sp500MaTbl" style="display:none">
-          <thead><tr><th>股票</th><th>#</th><th>收盘价</th><th>MA200</th><th>超出幅度 ↑</th><th>63日均量</th></tr></thead>
+          <thead><tr><th>标的</th><th>排名</th><th>收盘价</th><th>MA200</th><th>距 MA200</th><th>权重</th></tr></thead>
           <tbody id="sp500MaBody"></tbody>
         </table>
         <div class="card-note">ADV Top10 池内按 MA200 距离排序，取前 3</div>
@@ -283,74 +283,35 @@ SIGNALS_HTML = r"""<!doctype html>
     if (v >= 1e6) return "$" + P2.format(v/1e6) + "M";
     return "$" + P0.format(v);
   }
-  function distCell(pct) {
-    if (pct == null) return '<span class="na">N/A</span>';
-    const cls = pct >= 0 ? "pos" : "neg";
-    const sgn = pct >= 0 ? "+" : "";
-    return '<span class="' + cls + '">' + sgn + P1.format(pct) + "%</span>";
-  }
-  function advRow(r) {
-    const rc = r.rank <= 3 ? "s-hi" : "s-lo";
-    return "<tr>"
-      + "<td><span class='sym'>" + r.symbol + "</span></td>"
-      + "<td><span class='rk " + rc + "'>" + r.rank + "</span></td>"
-      + "<td class='num'>$" + P2.format(r.close) + "</td>"
-      + "<td>" + distCell(r.distance_pct) + "</td>"
-      + "<td class='num'>" + money(r.adv63) + "</td>"
-      + "</tr>";
-  }
-  function maRow(r) {
-    const ma = r.ma200 != null
-      ? "<span class='num'>$" + P2.format(r.ma200) + "</span>"
-      : '<span class="na">N/A</span>';
-    return "<tr>"
-      + "<td><span class='sym'>" + r.symbol + "</span></td>"
-      + "<td><span class='rk o-hi'>" + r.rank + "</span></td>"
-      + "<td class='num'>$" + P2.format(r.close) + "</td>"
-      + "<td>" + ma + "</td>"
-      + "<td>" + distCell(r.distance_pct) + "</td>"
-      + "<td class='num'>" + money(r.adv63) + "</td>"
-      + "</tr>";
-  }
-  function shortRows(data) {
-    const rows = [];
-    rows.push("<tr>"
-      + "<td><span class='sym'>" + data.short_proxy + "</span></td>"
-      + "<td><span class='rk x-hi'>" + data.short_allocation.proxy_pct + "%</span></td>"
-      + "<td class='na'>指数</td><td class='na'>—</td><td class='na'>—</td>"
-      + "</tr>");
-    data.short_selected.forEach(r => {
-      const ma = r.ma200 != null
-        ? "<span class='num'>$" + P2.format(r.ma200) + "</span>"
-        : '<span class="na">N/A</span>';
-      rows.push("<tr>"
-        + "<td><span class='sym'>" + r.symbol + "</span></td>"
-        + "<td><span class='rk x-hi'>" + data.short_allocation.weak_stock_pct + "%</span></td>"
-        + "<td class='num'>$" + P2.format(r.close) + "</td>"
-        + "<td>" + ma + "</td>"
-        + "<td>" + distCell(r.distance_pct) + "</td>"
-        + "</tr>");
+  function targetRow(r) {
+    const tr = document.createElement("tr");
+    const price = Number.isFinite(r.close) ? "$" + P2.format(r.close) : "—";
+    const ma200 = Number.isFinite(r.ma200) ? "$" + P2.format(r.ma200) : "—";
+    const distance = Number.isFinite(r.distance_pct) ? P1.format(r.distance_pct) + "%" : "—";
+    [r.symbol, r.rank, price, ma200, distance, r.target_weight_pct + "%"].forEach((value, index) => {
+      const td = document.createElement("td");
+      td.textContent = String(value);
+      if (index === 0) td.className = "sym";
+      if (index === 1) td.className = "rk o-hi";
+      tr.appendChild(td);
     });
-    return rows.join("");
+    return tr;
   }
-  function show(tblId, msgId, rows, renderFn) {
-    document.getElementById(tblId.replace("Tbl","Body")).innerHTML = rows.map(renderFn).join("");
+  function show(tblId, msgId, rows) {
+    const body = document.getElementById(tblId.replace("Tbl","Body"));
+    body.replaceChildren(...rows.map(targetRow));
     document.getElementById(msgId).style.display = "none";
     document.getElementById(tblId).style.display = "";
   }
-  function showShort(prefix, data, status) {
-    document.getElementById(prefix+"ShortBody").innerHTML = shortRows(data);
-    document.getElementById(prefix+"ShortMsg").style.display = "none";
-    document.getElementById(prefix+"ShortTbl").style.display = "";
-    document.getElementById(prefix+"ShortType").textContent =
-      status && status.short_type ? status.short_type : "Gap Short";
-  }
-  function renderUniverse(data, prefix) {
-    show(prefix+"AdvTbl", prefix+"AdvMsg", data.adv_selected,  advRow);
-    show(prefix+"MaTbl",  prefix+"MaMsg",  data.ma200_selected, maRow);
-    showShort(prefix, data, window.MARKET_STATUS);
-    document.getElementById(prefix+"Meta").textContent =
-      "截至 " + data.as_of + " · " + data.valid_count + "/" + data.universe_count + " 有效";
+  function renderTargets(data, universe, prefix) {
+    const rows = data.buy_targets.filter(r => r.universe === universe);
+    show(prefix+"MaTbl", prefix+"MaMsg", rows);
+    ["AdvMsg","ShortMsg"].forEach(s => {
+      const el = document.getElementById(prefix+s);
+      el.textContent = "预计算模式"; el.style.display = "";
+    });
+    ["AdvTbl","ShortTbl"].forEach(s => document.getElementById(prefix+s).style.display = "none");
+    document.getElementById(prefix+"Meta").textContent = rows.length + " 个买入标的";
   }
   function renderMarketStatus(status) {
     window.MARKET_STATUS = status || {};
@@ -397,8 +358,8 @@ SIGNALS_HTML = r"""<!doctype html>
       if (!res.ok) throw new Error(data.error || "请求失败");
       document.getElementById("clock").textContent = data.generated_at.replace("T"," ");
       renderMarketStatus(data.market_status);
-      renderUniverse(data.nasdaq100, "nasdaq");
-      renderUniverse(data.sp500,     "sp500");
+      renderTargets(data, "nasdaq100", "nasdaq");
+      renderTargets(data, "sp500", "sp500");
     } catch(err) { setError(err.message); }
     finally { btn.disabled = false; }
   }

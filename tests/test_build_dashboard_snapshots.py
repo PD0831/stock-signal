@@ -13,7 +13,53 @@ from scripts.build_dashboard_snapshots import (
     build_dashboard_snapshot,
     write_json_atomic,
     run,
+    snapshot_session_metadata,
 )
+
+
+def test_session_metadata_keeps_holiday_snapshot_fresh_until_next_open():
+    class Calendar:
+        def is_open_on_minute(self, at):
+            return False
+        def next_open(self, at):
+            return datetime.fromisoformat("2026-07-06T13:30:00+00:00")
+
+    metadata = snapshot_session_metadata(
+        datetime.fromisoformat("2026-07-03T15:00:00+00:00"), calendar=Calendar()
+    )
+
+    assert metadata == {
+        "session_status": "closed",
+        "fresh_until": "2026-07-06T14:00:00+00:00",
+    }
+
+
+def test_session_metadata_early_close_rolls_to_next_session():
+    class Calendar:
+        def is_open_on_minute(self, at):
+            return at < datetime.fromisoformat("2026-11-27T18:00:00+00:00")
+        def next_open(self, at):
+            return datetime.fromisoformat("2026-11-30T14:30:00+00:00")
+
+    metadata = snapshot_session_metadata(
+        datetime.fromisoformat("2026-11-27T17:45:00+00:00"), calendar=Calendar()
+    )
+
+    assert metadata["fresh_until"] == "2026-11-30T15:00:00+00:00"
+
+
+def test_session_metadata_preopen_stays_fresh_through_first_update():
+    class Calendar:
+        def is_open_on_minute(self, at):
+            return False
+        def next_open(self, at):
+            return datetime.fromisoformat("2026-07-06T13:30:00+00:00")
+
+    metadata = snapshot_session_metadata(
+        datetime.fromisoformat("2026-07-06T13:15:00+00:00"), calendar=Calendar()
+    )
+
+    assert metadata["fresh_until"] == "2026-07-06T14:00:00+00:00"
 from scripts.market_snapshot_data import _calculate_breadth, _calc_ntss, _ntss_series
 from scripts.market_snapshot_data import SnapshotMarketData, daily_close_payload
 
@@ -120,26 +166,28 @@ def test_snapshot_pair_validation_requires_schema_and_matching_generation(tmp_pa
 
     dashboard = tmp_path / "dashboard_snapshot.json"
     breadth = tmp_path / "breadth_15m.json"
+    generated_at = datetime.now(timezone.utc).isoformat()
+    quality = {"fresh_until": generated_at, "session_status": "closed"}
     dashboard.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": "now",
-        "buy_targets": [], "market_status": {}, "quality": {},
+        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "buy_targets": [], "market_status": {}, "quality": quality,
     }))
     breadth.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": "now",
-        "records": [], "quality": {}, "latest_transition": None,
+        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "records": [], "quality": quality, "latest_transition": None,
     }))
     validate_snapshot_pair(dashboard, breadth)
 
     breadth.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "different", "generated_at": "now",
-        "records": [], "quality": {}, "latest_transition": None,
+        "schema_version": 1, "generation_id": "different", "generated_at": generated_at,
+        "records": [], "quality": quality, "latest_transition": None,
     }))
     with pytest.raises(ValueError, match="generation_id"):
         validate_snapshot_pair(dashboard, breadth)
 
     breadth.write_text(json.dumps({
-        "schema_version": 2, "generation_id": "same", "generated_at": "now",
-        "records": [], "quality": {}, "latest_transition": None,
+        "schema_version": 2, "generation_id": "same", "generated_at": generated_at,
+        "records": [], "quality": quality, "latest_transition": None,
     }))
     with pytest.raises(ValueError, match="schema_version"):
         validate_snapshot_pair(dashboard, breadth)
@@ -164,14 +212,16 @@ def test_snapshot_pair_validation_rejects_missing_or_wrong_types(
 ):
     from scripts.validate_dashboard_snapshots import validate_snapshot_pair
 
+    generated_at = datetime.now(timezone.utc).isoformat()
+    quality = {"fresh_until": generated_at, "session_status": "closed"}
     payloads = {
         "dashboard": {
-            "schema_version": 1, "generation_id": "same", "generated_at": "now",
-            "buy_targets": [], "market_status": {}, "quality": {},
+            "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+            "buy_targets": [], "market_status": {}, "quality": quality,
         },
         "breadth": {
-            "schema_version": 1, "generation_id": "same", "generated_at": "now",
-            "records": [], "quality": {}, "latest_transition": None,
+            "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+            "records": [], "quality": quality, "latest_transition": None,
         },
     }
     payloads[artifact][field] = bad_value
@@ -196,6 +246,54 @@ def test_snapshot_pair_validation_rejects_truncated_json(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "bad_target",
+    [
+        {"symbol": "<script>", "universe": "sp500"},
+        {"symbol": "AAPL", "universe": "javascript:alert(1)"},
+    ],
+)
+def test_publication_validator_rejects_unsafe_buy_targets(tmp_path, bad_target):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    quality = {"fresh_until": generated_at, "session_status": "closed"}
+    dashboard = tmp_path / "dashboard.json"
+    breadth = tmp_path / "breadth.json"
+    dashboard.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "buy_targets": [bad_target], "market_status": {}, "quality": quality,
+    }))
+    breadth.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "records": [], "quality": quality, "latest_transition": None,
+    }))
+
+    with pytest.raises(ValueError, match="invalid"):
+        validate_snapshot_pair(dashboard, breadth)
+
+
+def test_publication_validator_rejects_non_finite_json(tmp_path):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    quality = {"fresh_until": generated_at, "session_status": "closed"}
+    dashboard = tmp_path / "dashboard.json"
+    breadth = tmp_path / "breadth.json"
+    dashboard.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "buy_targets": [], "market_status": {}, "quality": quality,
+    }))
+    breadth.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "records": [{"t": generated_at, "s": float("inf")}],
+        "quality": quality, "latest_transition": None,
+    }))
+
+    with pytest.raises(ValueError, match="finite"):
+        validate_snapshot_pair(dashboard, breadth)
+
+
+@pytest.mark.parametrize(
     ("artifact", "field"),
     [("dashboard", "buy_targets"), ("breadth", "latest_transition")],
 )
@@ -204,14 +302,16 @@ def test_snapshot_pair_validation_rejects_missing_required_fields(
 ):
     from scripts.validate_dashboard_snapshots import validate_snapshot_pair
 
+    generated_at = datetime.now(timezone.utc).isoformat()
+    quality = {"fresh_until": generated_at, "session_status": "closed"}
     payloads = {
         "dashboard": {
-            "schema_version": 1, "generation_id": "same", "generated_at": "now",
-            "buy_targets": [], "market_status": {}, "quality": {},
+            "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+            "buy_targets": [], "market_status": {}, "quality": quality,
         },
         "breadth": {
-            "schema_version": 1, "generation_id": "same", "generated_at": "now",
-            "records": [], "quality": {}, "latest_transition": None,
+            "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+            "records": [], "quality": quality, "latest_transition": None,
         },
     }
     del payloads[artifact][field]
@@ -570,11 +670,15 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
     assert dashboard["quality"] == {
         "nasdaq100": {"valid_count": 99, "failed_count": 2},
         "sp500": {"valid_count": 498, "failed_count": 2},
+        "session_status": "closed",
+        "fresh_until": "2026-07-13T14:00:00+00:00",
     }
     assert breadth["quality"] == {
         "expected_count": 500,
         "valid_count": 497,
         "failed_count": 3,
+        "session_status": "closed",
+        "fresh_until": "2026-07-13T14:00:00+00:00",
     }
     assert breadth["records"] == [
         {
