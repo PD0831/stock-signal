@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live stock-selection + hourly breadth monitor web app.
+"""Display-only MVS dashboard backed by precomputed JSON snapshots.
 
 Routes:
   GET /             — stock selection signals (NASDAQ100 + S&P500)
@@ -10,21 +10,16 @@ Routes:
 
 from __future__ import annotations
 
-import gc
-import hashlib
+import copy
+import json
 import threading
-import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from io import StringIO
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
-import numpy as np
-import pandas as pd
-import requests
-import yfinance as yf
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 import os
@@ -40,6 +35,7 @@ BREADTH_MIN_STOCKS = 100
 _YF_BATCH_SIZE     = 50
 BREADTH_DAILY_PERIOD = "2y"
 BREADTH_MA_POLICY = "MA windows use available-history average until 20/50/200 closes exist"
+DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
 
 # ── In-memory cache (LRU-bounded; evicts on expiry to free RAM on 512MB tier) ──
 _memory_cache: "OrderedDict[str, tuple[datetime, Any]]" = OrderedDict()
@@ -804,6 +800,123 @@ def api_breadth() -> JSONResponse:
 @app.get("/breadth", response_class=HTMLResponse)
 def breadth_page() -> str:
     return BREADTH_HTML
+
+
+# ── Snapshot-only display application ────────────────────────────────────────
+SNAPSHOT_SCHEMA_VERSION = 1
+DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
+_SNAPSHOT_FILES = {"dashboard": "dashboard_snapshot.json", "breadth": "breadth_15m.json"}
+_snapshot_cache: dict[Path, tuple[int, int, dict[str, Any]]] = {}
+
+
+class SnapshotUnavailable(ValueError):
+    """A public snapshot is missing, malformed, or inconsistent."""
+
+
+def _require(payload: dict[str, Any], key: str, expected: type, name: str) -> Any:
+    value = payload.get(key)
+    if not isinstance(value, expected):
+        raise SnapshotUnavailable(f"{name}: required field {key!r} must be {expected.__name__}")
+    return value
+
+
+def _decode_snapshot(path: Path, name: str) -> dict[str, Any]:
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise SnapshotUnavailable(f"{name}: snapshot is unavailable: {exc}") from exc
+    cache_key = (stat.st_mtime_ns, stat.st_size)
+    cached = _snapshot_cache.get(path)
+    if cached is not None and cached[:2] == cache_key:
+        return copy.deepcopy(cached[2])
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SnapshotUnavailable(f"{name}: invalid JSON snapshot: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SnapshotUnavailable(f"{name}: snapshot root must be an object")
+    if payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+        raise SnapshotUnavailable(
+            f"{name}: incompatible schema_version {payload.get('schema_version')!r}; expected 1"
+        )
+    _require(payload, "generation_id", str, name)
+    generated_at = _require(payload, "generated_at", str, name)
+    try:
+        parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SnapshotUnavailable(f"{name}: generated_at is not ISO-8601") from exc
+    if parsed.tzinfo is None:
+        raise SnapshotUnavailable(f"{name}: generated_at must include a timezone")
+    _require(payload, "buy_targets" if name == "dashboard" else "records", list, name)
+    _snapshot_cache[path] = (*cache_key, payload)
+    return copy.deepcopy(payload)
+
+
+def _snapshot_pair() -> dict[str, dict[str, Any]]:
+    pair = {
+        name: _decode_snapshot(DATA_DIR / filename, name)
+        for name, filename in _SNAPSHOT_FILES.items()
+    }
+    if len({payload["generation_id"] for payload in pair.values()}) != 1:
+        raise SnapshotUnavailable("snapshot generation mismatch; refresh both artifacts together")
+    return pair
+
+
+def _is_stale(generated_at: str, now: datetime | None = None) -> bool:
+    generated = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    current = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo("America/New_York"))
+    market_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
+    if current.weekday() < 5 and market_open <= current <= market_close:
+        expected = current
+    else:
+        expected = market_close
+        if current.weekday() < 5 and current < market_open:
+            expected -= timedelta(days=1)
+        while expected.weekday() >= 5:
+            expected -= timedelta(days=1)
+    return expected.astimezone(timezone.utc) - generated.astimezone(timezone.utc) > timedelta(minutes=30)
+
+
+def load_snapshot(name: str) -> dict[str, Any]:
+    if name not in _SNAPSHOT_FILES:
+        raise SnapshotUnavailable(f"unknown snapshot {name!r}")
+    payload = _snapshot_pair()[name]
+    payload["stale"] = _is_stale(payload["generated_at"])
+    return payload
+
+
+display_app = FastAPI(title="MVS Dashboard")
+
+
+@display_app.get("/", response_class=HTMLResponse)
+def display_signals_page() -> str:
+    return SIGNALS_HTML
+
+
+@display_app.get("/breadth", response_class=HTMLResponse)
+def display_breadth_page() -> str:
+    return BREADTH_HTML
+
+
+def _snapshot_response(name: str) -> JSONResponse:
+    try:
+        return JSONResponse(load_snapshot(name))
+    except SnapshotUnavailable as exc:
+        return JSONResponse({"available": False, "error": str(exc)}, status_code=503)
+
+
+@display_app.get("/api/signals")
+def display_signals_api() -> JSONResponse:
+    return _snapshot_response("dashboard")
+
+
+@display_app.get("/api/breadth")
+def display_breadth_api() -> JSONResponse:
+    return _snapshot_response("breadth")
+
+
+app = display_app
 
 
 # ── HTML: shared nav ──────────────────────────────────────────────────────────

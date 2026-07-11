@@ -1,6 +1,6 @@
 from unittest.mock import Mock
 
-import live_stock_signal_app as app
+from scripts import market_snapshot_data
 
 
 def test_fetch_current_nasdaq_symbols_uses_constituent_list(monkeypatch):
@@ -21,10 +21,9 @@ def test_fetch_current_nasdaq_symbols_uses_constituent_list(monkeypatch):
         requested_urls.append(url)
         return response
 
-    monkeypatch.setattr(app.requests, "get", fake_get)
-    app._memory_cache.clear()
+    monkeypatch.setattr(market_snapshot_data.requests, "get", fake_get)
 
-    assert app.fetch_current_symbols("nasdaq100") == [
+    assert market_snapshot_data._wikipedia_symbols("nasdaq100") == [
         f"TEST{i:02d}" for i in range(80)
     ]
     assert requested_urls == [
