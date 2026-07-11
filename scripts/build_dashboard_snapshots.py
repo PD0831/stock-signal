@@ -15,6 +15,13 @@ from typing import Any, Iterable, Mapping, Protocol
 
 SCHEMA_VERSION = 1
 WEIGHTS = (60, 20, 20)
+PROVENANCE = {
+    "builder_name": "scripts.build_dashboard_snapshots",
+    "builder_schema_version": SCHEMA_VERSION,
+    "market_data_provider": "yfinance/Yahoo Finance",
+    "price_adjustment": "unadjusted",
+    "intervals": {"signals": "1d/2y", "breadth": "15m/5d + 1d/2y"},
+}
 
 
 def snapshot_session_metadata(
@@ -83,6 +90,7 @@ def build_dashboard_snapshot(
 
     return {
         "schema_version": SCHEMA_VERSION,
+        "provenance": deepcopy(PROVENANCE),
         "generated_at": _timestamp(generated_at),
         "market_status": market_status,
         "quality": quality,
@@ -134,6 +142,7 @@ def build_breadth_snapshot(
 
     return {
         "schema_version": SCHEMA_VERSION,
+        "provenance": deepcopy(PROVENANCE),
         "generated_at": _timestamp(generated_at),
         "records": record_list,
         "quality": quality,

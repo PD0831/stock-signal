@@ -33,6 +33,20 @@ def _validate_core(payload: dict, path: Path) -> None:
         raise ValueError(f"{path}: generated_at must include a timezone")
     if generated_at.astimezone(timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=5):
         raise ValueError(f"{path}: generated_at is implausibly far in the future")
+    provenance = payload.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError(f"{path}: provenance must be dict")
+    for field in ("builder_name", "market_data_provider", "price_adjustment"):
+        if not isinstance(provenance.get(field), str) or not provenance[field]:
+            raise ValueError(f"{path}: provenance.{field} must be a nonempty string")
+    if type(provenance.get("builder_schema_version")) is not int:
+        raise ValueError(f"{path}: provenance.builder_schema_version must be integer")
+    intervals = provenance.get("intervals")
+    if not isinstance(intervals, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in intervals.items()
+    ):
+        raise ValueError(f"{path}: provenance.intervals must be a string map")
 
 
 def _reject_non_finite(value: object, location: str) -> None:
@@ -105,6 +119,8 @@ def validate_snapshot_pair(dashboard_path: Path, breadth_path: Path) -> None:
         raise ValueError(f"{breadth_path}: latest_transition must be null or dict")
     if dashboard["generation_id"] != breadth["generation_id"]:
         raise ValueError("snapshot generation_id values do not match")
+    if dashboard["provenance"] != breadth["provenance"]:
+        raise ValueError("snapshot provenance values do not match")
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -114,11 +114,30 @@ def _decode_snapshot(path: Path, name: str) -> dict[str, Any]:
         raise SnapshotUnavailable(f"{name}: generated_at must include a timezone")
     if parsed.astimezone(timezone.utc) > datetime.now(timezone.utc) + timedelta(minutes=5):
         raise SnapshotUnavailable(f"{name}: generated_at is implausibly far in the future")
+    _validate_provenance(payload, name)
     (_validate_dashboard if name == "dashboard" else _validate_breadth)(payload)
     _validate_quality(payload["quality"], name)
     _require_finite_numbers(payload, name)
     _snapshot_cache[path] = (*cache_key, payload)
     return copy.deepcopy(payload)
+
+
+def _validate_provenance(payload: dict[str, Any], name: str) -> None:
+    provenance = _require(payload, "provenance", dict, name)
+    for field in ("builder_name", "market_data_provider", "price_adjustment"):
+        value = provenance.get(field)
+        if not isinstance(value, str) or not value:
+            raise SnapshotUnavailable(f"{name}: provenance.{field} must be nonempty string")
+    if type(provenance.get("builder_schema_version")) is not int:
+        raise SnapshotUnavailable(
+            f"{name}: provenance.builder_schema_version must be integer"
+        )
+    intervals = provenance.get("intervals")
+    if not isinstance(intervals, dict) or not all(
+        isinstance(key, str) and isinstance(value, str)
+        for key, value in intervals.items()
+    ):
+        raise SnapshotUnavailable(f"{name}: provenance.intervals must be string map")
 
 
 def _snapshot_pair() -> dict[str, dict[str, Any]]:
@@ -128,6 +147,8 @@ def _snapshot_pair() -> dict[str, dict[str, Any]]:
     }
     if len({payload["generation_id"] for payload in pair.values()}) != 1:
         raise SnapshotUnavailable("snapshot generation mismatch; refresh both artifacts together")
+    if pair["dashboard"]["provenance"] != pair["breadth"]["provenance"]:
+        raise SnapshotUnavailable("snapshot provenance mismatch; refresh both artifacts together")
     return pair
 
 

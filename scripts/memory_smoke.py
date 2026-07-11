@@ -55,10 +55,14 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[1]
     port = _free_port()
     env = {**os.environ, "DATA_DIR": str(root / "data")}
+    egress_log = root / ".memory-smoke-egress.jsonl"
+    egress_log.unlink(missing_ok=True)
+    env["EGRESS_LOG"] = str(egress_log)
     process = subprocess.Popen(
         [
             sys.executable,
-            "-m",
+            str(root / "scripts" / "network_guard.py"),
+            "--",
             "uvicorn",
             "live_stock_signal_app:app",
             "--host",
@@ -108,6 +112,10 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError(
                 f"RSS growth {growth:.2f} MiB exceeds {args.growth_limit_mib:.2f} MiB"
             )
+        if egress_log.exists() and egress_log.stat().st_size:
+            raise RuntimeError(
+                f"web process attempted blocked egress: {egress_log.read_text()}"
+            )
         return 0
     finally:
         process.terminate()
@@ -116,6 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        egress_log.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

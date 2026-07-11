@@ -17,6 +17,7 @@ def _write_pair(tmp_path, *, generated_at=None, schema_version=1, mismatch=False
     fresh_until = (datetime.fromisoformat(generated_at) + timedelta(hours=1)).isoformat()
     dashboard = {
         "schema_version": schema_version,
+        "provenance": {"builder_name": "scripts.build_dashboard_snapshots", "builder_schema_version": 1, "market_data_provider": "yfinance/Yahoo Finance", "price_adjustment": "unadjusted", "intervals": {}},
         "generation_id": "generation-a",
         "generated_at": generated_at,
         "market_status": {"phase_code": "B"},
@@ -25,6 +26,7 @@ def _write_pair(tmp_path, *, generated_at=None, schema_version=1, mismatch=False
     }
     breadth = {
         "schema_version": schema_version,
+        "provenance": {"builder_name": "scripts.build_dashboard_snapshots", "builder_schema_version": 1, "market_data_provider": "yfinance/Yahoo Finance", "price_adjustment": "unadjusted", "intervals": {}},
         "generation_id": "generation-b" if mismatch else "generation-a",
         "generated_at": generated_at,
         "quality": {"valid_count": 500, "fresh_until": fresh_until, "session_status": "open"},

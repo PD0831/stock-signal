@@ -1,3 +1,6 @@
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -14,6 +17,7 @@ def test_render_uses_snapshot_only_single_worker_runtime():
     assert env["DATA_DIR"] == "data"
     assert env["WEB_CONCURRENCY"] == "1"
     assert "--workers 1" in service["startCommand"]
+    assert "scripts/network_guard.py -- uvicorn" in service["startCommand"]
 
 
 def test_web_runtime_dependencies_exclude_market_build_stack():
@@ -31,3 +35,33 @@ def test_memory_smoke_script_exists_and_checks_all_public_routes():
     for route in ('"/"', '"/api/signals"', '"/breadth"', '"/api/breadth"'):
         assert route in script
     assert "256" in script
+    assert "network_guard.py" in script
+
+
+def test_network_guard_blocks_and_records_intentional_external_connect(tmp_path):
+    log = tmp_path / "blocked-egress.jsonl"
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "network_guard.py"), "--probe-external"],
+        env={"EGRESS_LOG": str(log)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    attempts = [json.loads(line) for line in log.read_text().splitlines()]
+    assert attempts and attempts[-1]["host"] == "203.0.113.1"
+
+
+def test_network_guarded_memory_smoke_serves_all_routes_without_egress():
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "memory_smoke.py"), "--iterations", "3"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "startup_rss_mib=" in result.stdout
+    assert "peak_rss_mib=" in result.stdout

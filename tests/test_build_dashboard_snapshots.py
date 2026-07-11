@@ -7,6 +7,7 @@ import pandas as pd
 import yaml
 
 from scripts.build_dashboard_snapshots import (
+    PROVENANCE,
     SCHEMA_VERSION,
     WEIGHTS,
     build_breadth_snapshot,
@@ -170,17 +171,17 @@ def test_snapshot_pair_validation_requires_schema_and_matching_generation(tmp_pa
     generated_at = datetime.now(timezone.utc).isoformat()
     quality = {"fresh_until": generated_at, "session_status": "closed"}
     dashboard.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
         "buy_targets": [], "market_status": {}, "quality": quality,
     }))
     breadth.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
         "records": [], "quality": quality, "latest_transition": None,
     }))
     validate_snapshot_pair(dashboard, breadth)
 
     breadth.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "different", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "different", "generated_at": generated_at,
         "records": [], "quality": quality, "latest_transition": None,
     }))
     with pytest.raises(ValueError, match="generation_id"):
@@ -192,6 +193,26 @@ def test_snapshot_pair_validation_requires_schema_and_matching_generation(tmp_pa
     }))
     with pytest.raises(ValueError, match="schema_version"):
         validate_snapshot_pair(dashboard, breadth)
+
+
+def test_snapshot_pair_validation_requires_matching_provenance(tmp_path):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    generated_at = datetime.now(timezone.utc)
+    quality = {"fresh_until": generated_at.isoformat(), "session_status": "closed"}
+    dashboard = build_dashboard_snapshot(
+        {}, generated_at=generated_at, market_status={}, quality=quality
+    )
+    breadth = build_breadth_snapshot([], generated_at=generated_at, quality=quality)
+    dashboard["generation_id"] = breadth["generation_id"] = "same"
+    breadth["provenance"]["market_data_provider"] = "different"
+    dashboard_path = tmp_path / "dashboard.json"
+    breadth_path = tmp_path / "breadth.json"
+    dashboard_path.write_text(json.dumps(dashboard))
+    breadth_path.write_text(json.dumps(breadth))
+
+    with pytest.raises(ValueError, match="provenance"):
+        validate_snapshot_pair(dashboard_path, breadth_path)
 
 
 @pytest.mark.parametrize(
@@ -217,11 +238,11 @@ def test_snapshot_pair_validation_rejects_missing_or_wrong_types(
     quality = {"fresh_until": generated_at, "session_status": "closed"}
     payloads = {
         "dashboard": {
-            "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+            "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
             "buy_targets": [], "market_status": {}, "quality": quality,
         },
         "breadth": {
-            "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+            "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
             "records": [], "quality": quality, "latest_transition": None,
         },
     }
@@ -261,11 +282,11 @@ def test_publication_validator_rejects_unsafe_buy_targets(tmp_path, bad_target):
     dashboard = tmp_path / "dashboard.json"
     breadth = tmp_path / "breadth.json"
     dashboard.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
         "buy_targets": [bad_target], "market_status": {}, "quality": quality,
     }))
     breadth.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
         "records": [], "quality": quality, "latest_transition": None,
     }))
 
@@ -281,11 +302,11 @@ def test_publication_validator_rejects_non_finite_json(tmp_path):
     dashboard = tmp_path / "dashboard.json"
     breadth = tmp_path / "breadth.json"
     dashboard.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
         "buy_targets": [], "market_status": {}, "quality": quality,
     }))
     breadth.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
         "records": [{"t": generated_at, "s": float("inf")}],
         "quality": quality, "latest_transition": None,
     }))
@@ -319,11 +340,11 @@ def test_publication_validator_rejects_invalid_required_target_fields(
     dashboard = tmp_path / "dashboard.json"
     breadth = tmp_path / "breadth.json"
     dashboard.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
         "buy_targets": [target], "market_status": {}, "quality": quality,
     }))
     breadth.write_text(json.dumps({
-        "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+        "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
         "records": [], "quality": quality, "latest_transition": None,
     }))
 
@@ -344,11 +365,11 @@ def test_snapshot_pair_validation_rejects_missing_required_fields(
     quality = {"fresh_until": generated_at, "session_status": "closed"}
     payloads = {
         "dashboard": {
-            "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+            "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
             "buy_targets": [], "market_status": {}, "quality": quality,
         },
         "breadth": {
-            "schema_version": 1, "generation_id": "same", "generated_at": generated_at,
+            "schema_version": 1, "provenance": PROVENANCE, "generation_id": "same", "generated_at": generated_at,
             "records": [], "quality": quality, "latest_transition": None,
         },
     }
@@ -512,6 +533,13 @@ def test_dashboard_snapshot_merges_universes_and_assigns_weights():
     assert WEIGHTS == (60, 20, 20)
     assert snapshot == {
         "schema_version": 1,
+        "provenance": {
+            "builder_name": "scripts.build_dashboard_snapshots",
+            "builder_schema_version": 1,
+            "market_data_provider": "yfinance/Yahoo Finance",
+            "price_adjustment": "unadjusted",
+            "intervals": {"signals": "1d/2y", "breadth": "15m/5d + 1d/2y"},
+        },
         "generated_at": "2026-07-11T09:30:00+00:00",
         "market_status": {"phase": "B"},
         "quality": {"fresh": True},
@@ -564,6 +592,13 @@ def test_breadth_snapshot_reports_last_phase_change():
 
     assert snapshot == {
         "schema_version": 1,
+        "provenance": {
+            "builder_name": "scripts.build_dashboard_snapshots",
+            "builder_schema_version": 1,
+            "market_data_provider": "yfinance/Yahoo Finance",
+            "price_adjustment": "unadjusted",
+            "intervals": {"signals": "1d/2y", "breadth": "15m/5d + 1d/2y"},
+        },
         "generated_at": "2026-07-11T10:20:00+02:00",
         "records": records,
         "quality": {"valid": 98},
