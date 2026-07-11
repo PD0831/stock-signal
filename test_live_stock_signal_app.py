@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import re
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -264,6 +266,12 @@ def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monk
     assert 'breakdown!==null&&breakdown>=35' not in html
     assert 'setText("shortRadarTitle","正在加载市场风险")' in html
     assert 'setText("qualityDisclosure","正在检查覆盖率与新鲜度。")' in html
+    assert '<main id="dashboard"' in html
+    assert 'aria-live="polite"' in html
+    assert 'role="status"' in html
+    assert 'setAttribute("role","alert")' in html
+    assert 'setDashboardBusy(true)' in html
+    assert 'setDashboardBusy(false)' in html
 
 
 def test_builder_market_status_contract_is_consumed_by_homepage(tmp_path, monkeypatch):
@@ -297,3 +305,46 @@ def test_builder_market_status_contract_is_consumed_by_homepage(tmp_path, monkey
 
     for contract_value in ("strong", "breakdown", "ntss", "momentum", "action", "distance_pct"):
         assert f'status.{contract_value}' in html or f'target.{contract_value}' in html
+
+
+def test_dashboard_javascript_executes_state_transitions_and_safe_sorting(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    html = TestClient(_import_app(monkeypatch, tmp_path).app).get("/").text
+    scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
+    dashboard_script = scripts[-1]
+    harness = r'''
+const ids = ["dashboard","runBtn","currentAction","actionBasis","marketPhase","phaseBadge",
+ "freshnessBadge","dataTimestamp","strongValue","breakdownValue","ntssValue","momentumValue",
+ "ntssState","shortRadarTitle","shortRadarText","qualityDisclosure","targetCount","buyTargetBody",
+ "buyTargetTable","buyTargetMessage"];
+function element(id) { return {id, textContent:"", className:"", hidden:false, children:[], attrs:{},
+  style:{}, addEventListener(){}, setAttribute(k,v){this.attrs[k]=v;}, removeAttribute(k){delete this.attrs[k];},
+  appendChild(v){this.children.push(v);}, replaceChildren(...v){this.children=v;} }; }
+const elements = Object.fromEntries(ids.map(id => [id, element(id)]));
+globalThis.document = {getElementById(id){return elements[id]||(elements[id]=element(id));}, createElement(tag){return element(tag);}};
+globalThis.fetch = () => new Promise(() => {});
+'''
+    assertions = r'''
+renderStatus({market_status:{phase_code:"B",phase:"强势整固",signal:"long",label:"多头窗口",
+ action:"多头优先",strong:50,breakdown:20,ntss:-1,momentum:2,ntss_state:"PANIC"}});
+setDashboardBusy(false);
+if(elements.currentAction.textContent!=="多头窗口") throw new Error("success label");
+if(elements.ntssState.textContent!=="PANIC") throw new Error("success ntss state");
+if(elements.dashboard.attrs["aria-busy"]!=="false") throw new Error("success busy");
+if(elements.shortRadarTitle.textContent.includes("Risk Off")) throw new Error("radar re-derived risk");
+setLoading();
+if(elements.ntssState.textContent!=="等待") throw new Error("loading ntss reset");
+if(elements.dashboard.attrs["aria-busy"]!=="true") throw new Error("loading busy");
+setUnavailable("boom");
+if(elements.ntssState.textContent!=="—") throw new Error("error ntss reset");
+if(elements.dashboard.attrs["aria-busy"]!=="false") throw new Error("error busy");
+if(elements.buyTargetMessage.attrs.role!=="alert") throw new Error("missing alert");
+const sorted=sortedTargets([{rank:2,universe:"sp500",symbol:"B"},{rank:1,universe:"sp500",symbol:"Z"},{rank:1,universe:"nasdaq100",symbol:"A"}]);
+if(sorted.map(x=>x.symbol).join("")!=="AZB") throw new Error("sort contract");
+const safe=cell("<img onerror=bad>"); if(safe.textContent!=="<img onerror=bad>") throw new Error("unsafe text");
+'''
+    result = subprocess.run(
+        ["node", "-e", harness + dashboard_script + assertions],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr

@@ -116,13 +116,13 @@ SIGNALS_HTML = r"""<!doctype html>
   <div class="header-actions"><span id="dataTimestamp">数据时间 —</span><button id="runBtn" type="button">刷新快照</button></div>
 </header>
 """ + _NAV + r"""
-<main>
+<main id="dashboard" aria-busy="false">
   <section class="hero" aria-labelledby="currentAction">
-    <div class="action-panel"><div class="action-label">当前行动</div><h2 id="currentAction">正在加载</h2>
+    <div class="action-panel" role="status" aria-live="polite"><div class="action-label">当前行动</div><h2 id="currentAction">正在加载</h2>
       <p id="actionBasis">正在读取最新预计算快照。</p></div>
     <div class="phase-panel"><div><div class="micro-label">市场阶段</div><div class="phase-row">
       <span id="marketPhase">—</span><span class="badge" id="phaseBadge">等待</span></div></div>
-      <div class="fresh-row"><span class="micro-label">快照状态</span><span class="badge" id="freshnessBadge">加载中</span></div></div>
+      <div class="fresh-row"><span class="micro-label">快照状态</span><span class="badge" id="freshnessBadge" role="status" aria-live="polite">加载中</span></div></div>
   </section>
   <section class="metrics" aria-label="市场关键指标">
     <article class="metric"><div class="metric-label">Strong</div><div class="metric-value positive" id="strongValue">—</div><div class="metric-note">强势股占比</div></article>
@@ -131,8 +131,8 @@ SIGNALS_HTML = r"""<!doctype html>
     <article class="metric"><div class="metric-label">Momentum</div><div class="metric-value" id="momentumValue">—</div><div class="metric-note">净动量</div></article>
   </section>
   <section class="section" aria-labelledby="targetsTitle">
-    <div class="section-head"><div><h2 id="targetsTitle">买入标的</h2><div class="section-sub">NASDAQ 100 与 S&amp;P 500 合并 · 默认按排名、市场、代码排序</div></div><span class="badge" id="targetCount">0 个</span></div>
-    <p id="buyTargetMessage">正在加载买入标的…</p>
+    <div class="section-head"><div><h2 id="targetsTitle">买入标的</h2><div class="section-sub">NASDAQ 100 与 S&amp;P 500 合并 · 默认按排名、市场、代码排序</div></div><span class="badge" id="targetCount" role="status" aria-live="polite">0 个</span></div>
+    <p id="buyTargetMessage" role="status" aria-live="polite">正在加载买入标的…</p>
     <div class="table-scroll"><table id="buyTargetTable" aria-label="买入标的专业表格" hidden>
       <thead><tr><th scope="col">排名</th><th scope="col">标的</th><th scope="col">市场</th><th scope="col">MA200 距离</th>
         <th scope="col">目标权重</th><th scope="col">最新价</th><th scope="col">ADV 排名</th><th scope="col">数据时间</th></tr></thead>
@@ -150,6 +150,7 @@ SIGNALS_HTML = r"""<!doctype html>
   function finite(value){ return typeof value === "number" && Number.isFinite(value); }
   function valueFrom(status,names){ for(const name of names){ if(finite(status[name])) return status[name]; } return null; }
   function setText(id,value){ document.getElementById(id).textContent=String(value); }
+  function setDashboardBusy(busy){ document.getElementById("dashboard").setAttribute("aria-busy",busy?"true":"false"); }
   function cell(value,className){ const td=document.createElement("td"); td.textContent=String(value); if(className) td.className=className; return td; }
   function universeName(value){ return value === "nasdaq100" ? "NASDAQ 100" : value === "sp500" ? "S&P 500" : "—"; }
   function targetRow(target){
@@ -168,6 +169,7 @@ SIGNALS_HTML = r"""<!doctype html>
     const rows=sortedTargets(Array.isArray(data.buy_targets)?data.buy_targets:[]);
     const table=document.getElementById("buyTargetTable"), message=document.getElementById("buyTargetMessage");
     document.getElementById("buyTargetBody").replaceChildren(...rows.map(targetRow));
+    message.setAttribute("role","status");
     setText("targetCount",rows.length+" 个"); table.hidden=rows.length===0; message.hidden=rows.length>0;
     if(!rows.length) message.textContent="当前快照没有可执行买入标的。";
   }
@@ -210,24 +212,28 @@ SIGNALS_HTML = r"""<!doctype html>
     setText("phaseBadge","未知"); setText("dataTimestamp","数据时间 —"); setText("targetCount","0 个");
     const badge=document.getElementById("freshnessBadge"); badge.className="badge unavailable"; badge.textContent="不可用";
     ["strongValue","breakdownValue","ntssValue","momentumValue"].forEach(id=>setText(id,"—"));
-    const table=document.getElementById("buyTargetTable"); table.hidden=true; const msg=document.getElementById("buyTargetMessage"); msg.hidden=false; msg.textContent="无法读取买入标的。";
+    setText("ntssState","—");
+    const table=document.getElementById("buyTargetTable"); table.hidden=true; const msg=document.getElementById("buyTargetMessage"); msg.hidden=false; msg.textContent="无法读取买入标的。"; msg.setAttribute("role","alert");
     setText("shortRadarTitle","等待有效快照"); setText("shortRadarText","当前不提供空头判断，请等待下一次成功发布。");
     setText("qualityDisclosure","请等待下一次预计算任务成功发布；服务会保留最后一次有效快照。 ");
+    setDashboardBusy(false);
   }
   function setLoading(){
     setText("currentAction","正在加载"); setText("actionBasis","正在读取最新预计算快照。"); setText("marketPhase","—");
     setText("phaseBadge","等待"); setText("dataTimestamp","数据时间 —"); setText("targetCount","0 个");
     const badge=document.getElementById("freshnessBadge"); badge.className="badge"; badge.textContent="加载中";
     ["strongValue","breakdownValue","ntssValue","momentumValue"].forEach(id=>setText(id,"—"));
+    setText("ntssState","等待");
     document.getElementById("buyTargetBody").replaceChildren(); document.getElementById("buyTargetTable").hidden=true;
-    const message=document.getElementById("buyTargetMessage"); message.hidden=false; message.textContent="正在加载买入标的…";
+    const message=document.getElementById("buyTargetMessage"); message.hidden=false; message.textContent="正在加载买入标的…"; message.setAttribute("role","status");
     setText("shortRadarTitle","正在加载市场风险"); setText("shortRadarText","正在读取 Breakdown、NTSS 与市场阶段。");
     setText("qualityDisclosure","正在检查覆盖率与新鲜度。");
+    setDashboardBusy(true);
   }
   async function runSignal(){
     const button=document.getElementById("runBtn"); button.disabled=true; setLoading();
     try { const response=await fetch("/api/signals"); const data=await response.json(); if(!response.ok) throw new Error(data.error||"请求失败");
-      renderStatus(data); renderQuality(data); renderTargets(data);
+      renderStatus(data); renderQuality(data); renderTargets(data); setDashboardBusy(false);
     } catch(error) { setUnavailable(error instanceof Error?error.message:"未知错误"); }
     finally { button.disabled=false; }
   }
