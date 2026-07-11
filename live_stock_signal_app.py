@@ -79,9 +79,10 @@ def _decode_snapshot(path: Path, name: str) -> dict[str, Any]:
         raise SnapshotUnavailable(f"{name}: invalid JSON snapshot: {exc}") from exc
     if not isinstance(payload, dict):
         raise SnapshotUnavailable(f"{name}: snapshot root must be an object")
-    if payload.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+    schema_version = payload.get("schema_version")
+    if type(schema_version) is not int or schema_version != SNAPSHOT_SCHEMA_VERSION:
         raise SnapshotUnavailable(
-            f"{name}: incompatible schema_version {payload.get('schema_version')!r}; expected 1"
+            f"{name}: incompatible schema_version {schema_version!r}; expected integer 1"
         )
     generation_id = _require(payload, "generation_id", str, name)
     if not generation_id:

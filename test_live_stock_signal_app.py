@@ -90,6 +90,19 @@ def test_incompatible_schema_is_unavailable_but_html_renders(tmp_path, monkeypat
     assert client.get("/breadth").status_code == 200
 
 
+def test_schema_version_requires_exact_integer_type(tmp_path, monkeypatch):
+    for schema_version in (True, 1.0):
+        case_dir = tmp_path / repr(schema_version)
+        case_dir.mkdir()
+        _write_pair(case_dir, schema_version=schema_version)
+        app_module = _import_app(monkeypatch, case_dir)
+
+        response = TestClient(app_module.app).get("/api/signals")
+
+        assert response.status_code == 503
+        assert "schema" in response.json()["error"].lower()
+
+
 def test_generation_mismatch_makes_both_apis_unavailable(tmp_path, monkeypatch):
     _write_pair(tmp_path, mismatch=True)
     app_module = _import_app(monkeypatch, tmp_path)
