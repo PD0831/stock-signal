@@ -221,17 +221,46 @@ def _market_status(record: Mapping[str, Any] | None) -> dict[str, Any]:
     if record is None:
         return {}
     phase_code = record.get("phase_code", record.get("phase"))
-    phases = {"A": "防守", "B": "观察", "C": "进攻", "D": "风险"}
-    actions = {
-        "A": "保持防守，等待确认",
-        "B": "耐心观察，不追涨",
-        "C": "按计划选择强势标的",
-        "D": "降低仓位，评估对冲",
+    phases = {
+        "A": ("全面牛市", "safe"), "B": ("强势整固", "safe"),
+        "C": ("牛市回调", "safe"), "D": ("修复中", "safe"),
+        "E": ("震荡整理", "caution"), "F": ("弱势未崩", "caution"),
+        "G": ("宽度承压", "panic"), "H": ("恐慌出清", "panic"),
     }
+    breakdown = record.get("breakdown", record.get("bd"))
+    ntss = record.get("ntss", record.get("mid"))
+    if breakdown is not None and breakdown < 35:
+        signal, short_type, label = "long", None, "多头窗口"
+        action = "多头优先：使用 ADV Top10 → MA200 Top3。"
+    elif (ntss is not None and ntss < 0) or phase_code in {"G", "H"}:
+        signal, short_type, label = "short", "Risk Off", "空头保险"
+        action = "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"
+    elif breakdown is not None and breakdown >= 35:
+        signal, short_type, label = "short_watch", "Trail Exhaustion", "空头雷达"
+        action = "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"
+    else:
+        signal, short_type, label = "watch", None, "观察"
+        action = "等待 MVS 多头或 Gap Short 触发。"
+    if ntss is None:
+        ntss_state, ntss_class = "UNKNOWN", "wait"
+    elif ntss < 0:
+        ntss_state, ntss_class = "PANIC", "panic"
+    elif ntss < 2:
+        ntss_state, ntss_class = "CAUTION", "caution"
+    else:
+        ntss_state, ntss_class = "SAFE", "safe"
+    phase, phase_class = phases.get(phase_code, (phase_code, "wait"))
     status = {
         "phase_code": phase_code,
-        "phase": phases.get(phase_code, phase_code),
-        "action": actions.get(phase_code, "等待市场状态确认"),
+        "phase": phase,
+        "phase_class": phase_class,
+        "signal": signal,
+        "label": label,
+        "short_type": short_type,
+        "ntss_state": ntss_state,
+        "ntss_class": ntss_class,
+        "action": action,
+        "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic",
         "as_of": record.get("t"),
     }
     aliases = {

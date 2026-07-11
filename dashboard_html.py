@@ -147,7 +147,6 @@ SIGNALS_HTML = r"""<!doctype html>
 <script>
   const F1 = new Intl.NumberFormat("zh-CN",{minimumFractionDigits:1,maximumFractionDigits:1});
   const F2 = new Intl.NumberFormat("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2});
-  const PHASES = {A:"防守",B:"观察",C:"进攻",D:"风险"};
   function finite(value){ return typeof value === "number" && Number.isFinite(value); }
   function valueFrom(status,names){ for(const name of names){ if(finite(status[name])) return status[name]; } return null; }
   function setText(id,value){ document.getElementById(id).textContent=String(value); }
@@ -178,14 +177,15 @@ SIGNALS_HTML = r"""<!doctype html>
     const breakdown=finite(status.breakdown)?status.breakdown:valueFrom(status,["bd"]);
     const ntss=finite(status.ntss)?status.ntss:valueFrom(status,["mid"]);
     const momentum=finite(status.momentum)?status.momentum:valueFrom(status,["mom"]);
-    setText("marketPhase",PHASES[phase]||phase); setText("phaseBadge",phase==="—"?"未知":"阶段 "+phase);
+    setText("marketPhase",phase==="—"?"—":phase+" "+(status.phase||"")); setText("phaseBadge",status.label||"未知");
     setText("strongValue",strong===null?"—":F1.format(strong)+"%"); setText("breakdownValue",breakdown===null?"—":F1.format(breakdown)+"%");
     setText("ntssValue",ntss===null?"—":F2.format(ntss)); setText("momentumValue",momentum===null?"—":F2.format(momentum));
     setText("ntssState",status.ntss_state||"市场中轴");
-    const action=status.action || (phase==="C"?"按计划选择强势标的":phase==="D"?"降低仓位，评估对冲":phase==="A"?"保持防守，等待确认":"耐心观察，不追涨");
-    setText("currentAction",action); setText("actionBasis",status.basis||"依据最新市场阶段与预计算候选股执行。");
-    const defensive=phase==="D"||phase==="A"; setText("shortRadarTitle",defensive?"风险阶段已激活":"当前无需主动做空");
-    setText("shortRadarText",defensive?"优先控制总仓位，并结合 15 分钟宽度页确认 Breakdown 与 NTSS。":"继续监测阶段切换；仅在转弱确认后评估对冲。");
+    setText("currentAction",status.label||"等待市场确认"); setText("actionBasis",status.action||status.basis||"依据最新市场阶段与预计算候选股执行。");
+    const riskOff=(phase==="G"||phase==="H"||(ntss!==null&&ntss<0));
+    const trailWatch=!riskOff&&breakdown!==null&&breakdown>=35;
+    setText("shortRadarTitle",riskOff?"Risk Off · 空头保险":trailWatch?"Trail Exhaustion · 空头雷达":"当前无需主动做空");
+    setText("shortRadarText",riskOff?"风险条件已激活，优先控制总仓位并评估对冲。":trailWatch?"Breakdown 已达到观察阈值，等待空头确认。":"继续监测阶段切换；仅在转弱确认后评估对冲。");
   }
   function renderQuality(data){
     const quality=data.quality||{}, badge=document.getElementById("freshnessBadge");
@@ -220,6 +220,8 @@ SIGNALS_HTML = r"""<!doctype html>
     ["strongValue","breakdownValue","ntssValue","momentumValue"].forEach(id=>setText(id,"—"));
     document.getElementById("buyTargetBody").replaceChildren(); document.getElementById("buyTargetTable").hidden=true;
     const message=document.getElementById("buyTargetMessage"); message.hidden=false; message.textContent="正在加载买入标的…";
+    setText("shortRadarTitle","正在加载市场风险"); setText("shortRadarText","正在读取 Breakdown、NTSS 与市场阶段。");
+    setText("qualityDisclosure","正在检查覆盖率与新鲜度。");
   }
   async function runSignal(){
     const button=document.getElementById("runBtn"); button.disabled=true; setLoading();

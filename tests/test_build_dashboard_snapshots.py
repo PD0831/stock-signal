@@ -14,6 +14,7 @@ from scripts.build_dashboard_snapshots import (
     write_json_atomic,
     run,
     snapshot_session_metadata,
+    _market_status,
 )
 
 
@@ -694,6 +695,45 @@ class FakeProvider:
         }
 
 
+@pytest.mark.parametrize(
+    ("phase", "expected_phase", "strong", "breakdown", "ntss", "signal", "label", "action"),
+    [
+        ("A", "全面牛市", 60.0, 10.0, 2.0, "long", "多头窗口", "多头优先：使用 ADV Top10 → MA200 Top3。"),
+        # Numeric long precedence wins even if an inconsistent phase says G.
+        ("G", "宽度承压", 15.0, 30.0, -1.0, "long", "多头窗口", "多头优先：使用 ADV Top10 → MA200 Top3。"),
+        ("G", "宽度承压", 15.0, 55.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),
+        ("H", "恐慌出清", 10.0, 60.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),
+        # Negative NTSS takes precedence over the breakdown watch threshold.
+        ("E", "震荡整理", 25.0, 40.0, -0.1, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),
+        ("E", "震荡整理", 25.0, 40.0, 1.0, "short_watch", "空头雷达", "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"),
+        ("D", "修复中", 30.0, None, 1.0, "watch", "观察", "等待 MVS 多头或 Gap Short 触发。"),
+    ],
+)
+def test_market_status_uses_established_phase_and_numeric_signal_precedence(
+    phase, expected_phase, strong, breakdown, ntss, signal, label, action
+):
+    status = _market_status({
+        "t": "2026-07-11T10:00:00Z", "phase_code": phase,
+        "s": strong, "bd": breakdown, "mid": ntss, "mom": 2.0,
+    })
+
+    assert status["phase"] == expected_phase
+    assert status["signal"] == signal
+    assert status["label"] == label
+    assert status["action"] == action
+    assert status["short_type"] == {
+        "short": "Risk Off", "short_watch": "Trail Exhaustion",
+    }.get(signal)
+
+
+@pytest.mark.parametrize("code,name", [
+    ("A", "全面牛市"), ("B", "强势整固"), ("C", "牛市回调"), ("D", "修复中"),
+    ("E", "震荡整理"), ("F", "弱势未崩"), ("G", "宽度承压"), ("H", "恐慌出清"),
+])
+def test_market_status_preserves_all_established_phase_labels(code, name):
+    assert _market_status({"phase_code": code, "bd": None, "mid": 1})["phase"] == name
+
+
 def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path):
     provider = FakeProvider()
     generated_at = datetime(2026, 7, 11, 14, 0, tzinfo=timezone.utc)
@@ -709,8 +749,13 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
         "breakdown": 22.0,
         "ntss": 1.25,
         "momentum": 4.5,
-        "phase": "观察",
-        "action": "耐心观察，不追涨",
+        "phase": "强势整固",
+        "signal": "long",
+        "label": "多头窗口",
+        "phase_class": "safe", "short_type": None,
+        "ntss_state": "CAUTION", "ntss_class": "caution",
+        "action": "多头优先：使用 ADV Top10 → MA200 Top3。",
+        "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic",
     }
     assert dashboard["quality"] == {
         "nasdaq100": {"valid_count": 99, "failed_count": 2},

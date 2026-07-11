@@ -254,6 +254,13 @@ def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monk
     assert "universe_source" in html
     assert "universe_warning" in html
     assert "候选不足" in html
+    assert "const PHASES" not in html
+    assert "status.phase" in html and "status.label" in html and "status.action" in html
+    assert 'phase==="G"||phase==="H"' in html
+    assert 'ntss!==null&&ntss<0' in html
+    assert 'breakdown!==null&&breakdown>=35' in html
+    assert 'setText("shortRadarTitle","正在加载市场风险")' in html
+    assert 'setText("qualityDisclosure","正在检查覆盖率与新鲜度。")' in html
 
 
 def test_builder_market_status_contract_is_consumed_by_homepage(tmp_path, monkeypatch):
@@ -275,7 +282,11 @@ def test_builder_market_status_contract_is_consumed_by_homepage(tmp_path, monkey
     response = client.get("/api/signals")
     assert response.status_code == 200
     assert response.json()["market_status"] | {"as_of": now.isoformat()} == {
-        "phase_code": "C", "phase": "进攻", "action": "按计划选择强势标的",
+        "phase_code": "C", "phase": "牛市回调", "signal": "long",
+        "phase_class": "safe", "label": "多头窗口", "short_type": None,
+        "ntss_state": "CAUTION", "ntss_class": "caution",
+        "action": "多头优先：使用 ADV Top10 → MA200 Top3。",
+        "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic",
         "as_of": now.isoformat(), "strong": 57.5, "breakdown": 13.5,
         "ntss": 1.25, "momentum": 4.5,
     }
