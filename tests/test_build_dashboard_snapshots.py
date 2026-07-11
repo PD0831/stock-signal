@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 
 import pytest
+import pandas as pd
 
 from scripts.build_dashboard_snapshots import (
     SCHEMA_VERSION,
@@ -9,7 +10,19 @@ from scripts.build_dashboard_snapshots import (
     build_breadth_snapshot,
     build_dashboard_snapshot,
     write_json_atomic,
+    run,
 )
+from scripts.market_snapshot_data import _ntss_series
+
+
+def test_ntss_series_is_vix3m_minus_vix():
+    index = pd.date_range("2026-07-11 13:30", periods=2, freq="15min", tz="UTC")
+    histories = {
+        "^VIX": pd.DataFrame({"Close": [15.0, 16.0]}, index=index),
+        "^VIX3M": pd.DataFrame({"Close": [18.0, 17.5]}, index=index),
+    }
+
+    assert _ntss_series(histories).tolist() == [3.0, 1.5]
 
 
 def test_dashboard_snapshot_merges_universes_and_assigns_weights():
@@ -180,3 +193,102 @@ def test_write_json_atomic_cleans_temp_and_preserves_destination_on_replace_fail
 
     assert path.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob(f".{path.name}.*.tmp"))
+
+
+class FakeProvider:
+    def __init__(self):
+        self.signal_calls = []
+        self.breadth_calls = 0
+
+    def compute_signals(self, universe):
+        self.signal_calls.append(universe)
+        return {
+            "universe": universe,
+            "valid_count": 99 if universe == "nasdaq100" else 498,
+            "failed_count": 2,
+            "ma200_selected": [
+                {"symbol": "NVDA" if universe == "nasdaq100" else "JPM", "rank": 1}
+            ],
+        }
+
+    def compute_breadth(self):
+        self.breadth_calls += 1
+        return {
+            "records": [
+                {
+                    "t": "2026-07-11T09:30:00-04:00",
+                    "s": 51.0,
+                    "bd": 22.0,
+                    "phase_code": "B",
+                }
+            ],
+            "n_stocks": 500,
+            "n_valid_hourly": 497,
+            "raw_prices": {"AAPL": [100, 101]},
+        }
+
+
+def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path):
+    provider = FakeProvider()
+    generated_at = datetime(2026, 7, 11, 14, 0, tzinfo=timezone.utc)
+
+    dashboard, breadth = run(tmp_path, provider=provider, generated_at=generated_at)
+
+    assert provider.signal_calls == ["nasdaq100", "sp500"]
+    assert provider.breadth_calls == 1
+    assert dashboard["market_status"] == {
+        "phase_code": "B",
+        "as_of": "2026-07-11T09:30:00-04:00",
+    }
+    assert dashboard["quality"] == {
+        "nasdaq100": {"valid_count": 99, "failed_count": 2},
+        "sp500": {"valid_count": 498, "failed_count": 2},
+    }
+    assert breadth["quality"] == {
+        "expected_count": 500,
+        "valid_count": 497,
+        "failed_count": 3,
+    }
+    assert breadth["records"] == [
+        {
+            "t": "2026-07-11T09:30:00-04:00",
+            "s": 51.0,
+            "bd": 22.0,
+            "phase_code": "B",
+        }
+    ]
+    for name in ("dashboard_snapshot.json", "breadth_15m.json"):
+        payload = json.loads((tmp_path / name).read_text(encoding="utf-8"))
+        assert "raw_prices" not in json.dumps(payload)
+
+
+@pytest.mark.parametrize("invalid_part", ["dashboard", "breadth"])
+def test_run_preserves_both_public_files_when_either_payload_is_invalid(
+    tmp_path, invalid_part
+):
+    dashboard_path = tmp_path / "dashboard_snapshot.json"
+    breadth_path = tmp_path / "breadth_15m.json"
+    dashboard_path.write_text('{"old":"dashboard"}\n', encoding="utf-8")
+    breadth_path.write_text('{"old":"breadth"}\n', encoding="utf-8")
+    provider = FakeProvider()
+    if invalid_part == "dashboard":
+        original = provider.compute_signals
+
+        def invalid_signals(universe):
+            result = original(universe)
+            result["ma200_selected"][0]["distance_pct"] = float("nan")
+            return result
+
+        provider.compute_signals = invalid_signals
+    else:
+        provider.compute_breadth = lambda: {
+            "records": [{"t": "now", "s": float("nan")}],
+            "n_stocks": 1,
+            "n_valid_hourly": 1,
+        }
+
+    with pytest.raises(ValueError):
+        run(tmp_path, provider=provider)
+
+    assert json.loads(dashboard_path.read_text())["old"] == "dashboard"
+    assert json.loads(breadth_path.read_text())["old"] == "breadth"

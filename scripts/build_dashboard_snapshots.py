@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import argparse
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Protocol
 
 
 SCHEMA_VERSION = 1
@@ -112,3 +113,142 @@ def write_json_atomic(path: str | os.PathLike[str], payload: Any) -> None:
     finally:
         if temporary_path is not None and temporary_path.exists():
             temporary_path.unlink()
+
+
+class MarketDataProvider(Protocol):
+    def compute_signals(self, universe: str) -> Mapping[str, Any]: ...
+
+    def compute_breadth(self) -> Mapping[str, Any]: ...
+
+
+def _json_bytes(payload: Any) -> bytes:
+    return (json.dumps(payload, allow_nan=False, ensure_ascii=False, indent=2) + "\n").encode()
+
+
+def _publish_pair(output_dir: Path, payloads: Mapping[str, Any]) -> None:
+    """Publish a validated pair, restoring both destinations on replace failure."""
+    serialized = {name: _json_bytes(payload) for name, payload in payloads.items()}
+    output_dir.mkdir(parents=True, exist_ok=True)
+    previous = {
+        name: (output_dir / name).read_bytes() if (output_dir / name).exists() else None
+        for name in payloads
+    }
+    staged: dict[str, Path] = {}
+    try:
+        for name, body in serialized.items():
+            with tempfile.NamedTemporaryFile(
+                dir=output_dir, prefix=f".{name}.", suffix=".tmp", delete=False
+            ) as handle:
+                handle.write(body)
+                handle.flush()
+                os.fsync(handle.fileno())
+                staged[name] = Path(handle.name)
+        replaced: list[str] = []
+        try:
+            for name, temporary in staged.items():
+                temporary.replace(output_dir / name)
+                replaced.append(name)
+        except Exception:
+            for name in replaced:
+                destination = output_dir / name
+                old = previous[name]
+                if old is None:
+                    destination.unlink(missing_ok=True)
+                else:
+                    with tempfile.NamedTemporaryFile(
+                        dir=output_dir, prefix=f".{name}.rollback.", delete=False
+                    ) as handle:
+                        handle.write(old)
+                        rollback = Path(handle.name)
+                    rollback.replace(destination)
+            raise
+    finally:
+        for temporary in staged.values():
+            temporary.unlink(missing_ok=True)
+
+
+def _quality(signals: Mapping[str, Any]) -> dict[str, int]:
+    return {
+        "valid_count": int(signals.get("valid_count", 0)),
+        "failed_count": int(signals.get("failed_count", 0)),
+    }
+
+
+def run(
+    output_dir: str | os.PathLike[str],
+    *,
+    provider: MarketDataProvider | None = None,
+    generated_at: datetime | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compute and atomically publish the two compact dashboard artifacts."""
+    if provider is None:
+        provider = YFinanceMarketDataProvider()
+    generated_at = generated_at or datetime.now(timezone.utc)
+    signals = {
+        universe: provider.compute_signals(universe)
+        for universe in ("nasdaq100", "sp500")
+    }
+    raw_breadth = provider.compute_breadth()
+    breadth_records = list(raw_breadth.get("records", []))
+    latest = breadth_records[-1] if breadth_records else None
+    market_status = (
+        {"phase_code": latest.get("phase_code"), "as_of": latest.get("t")}
+        if latest is not None
+        else None
+    )
+    dashboard = build_dashboard_snapshot(
+        {name: result.get("ma200_selected", []) for name, result in signals.items()},
+        generated_at=generated_at,
+        market_status=market_status,
+        quality={name: _quality(result) for name, result in signals.items()},
+    )
+    expected = int(raw_breadth.get("n_stocks", 0))
+    valid = int(raw_breadth.get("n_valid_hourly", raw_breadth.get("n_valid_15m", 0)))
+    breadth = build_breadth_snapshot(
+        breadth_records,
+        generated_at=generated_at,
+        quality={
+            "expected_count": expected,
+            "valid_count": valid,
+            "failed_count": max(expected - valid, 0),
+        },
+    )
+    _publish_pair(
+        Path(output_dir),
+        {"dashboard_snapshot.json": dashboard, "breadth_15m.json": breadth},
+    )
+    return dashboard, breadth
+
+
+class YFinanceMarketDataProvider:
+    """Lazy adapter around standalone market calculations.
+
+    Heavy dependencies are imported only for the snapshot command, keeping this
+    module importable in lightweight validation and display environments.
+    """
+
+    def __init__(self) -> None:
+        try:
+            from scripts.market_snapshot_data import SnapshotMarketData
+        except ModuleNotFoundError:
+            from market_snapshot_data import SnapshotMarketData
+
+        self._implementation = SnapshotMarketData()
+
+    def compute_signals(self, universe: str) -> Mapping[str, Any]:
+        return self._implementation.compute_signals(universe)
+
+    def compute_breadth(self) -> Mapping[str, Any]:
+        return self._implementation.compute_breadth()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output-dir", type=Path, default=Path("data"))
+    args = parser.parse_args(argv)
+    run(args.output_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
