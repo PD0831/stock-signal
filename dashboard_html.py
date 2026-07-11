@@ -20,7 +20,7 @@ _NAV = r"""
 """
 
 # ── HTML: signals page ────────────────────────────────────────────────────────
-SIGNALS_HTML = r"""<!doctype html>
+_LEGACY_SIGNALS_HTML = r"""<!doctype html>
 <html lang="zh">
 <head>
   <meta charset="utf-8">
@@ -368,6 +368,188 @@ SIGNALS_HTML = r"""<!doctype html>
 </script>
 </body>
 </html>
+"""
+
+# Action-first signals dashboard.  Kept next to the breadth page so the
+# display-only server can continue importing one dependency-free module.
+SIGNALS_HTML = r"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Market Vital Sign · 决策台</title>
+  <style>
+    :root { color-scheme:dark; --bg:#090d13; --panel:#111821; --line:#263140;
+      --muted:#8b98a9; --text:#eef3f8; --blue:#5ba7ff; --green:#41d17d;
+      --red:#ff6574; --amber:#f5c451; }
+    *,*::before,*::after { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+      font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:18px;
+      padding:18px max(18px,calc((100vw - 1320px)/2)); border-bottom:1px solid var(--line);
+      background:#0d131b; }
+    h1,h2,p { margin:0; } h1 { font-size:18px; } h2 { font-size:15px; }
+    .eyebrow { color:var(--blue); font-size:10px; font-weight:800; letter-spacing:.16em;
+      text-transform:uppercase; margin-bottom:3px; }
+    .header-actions { display:flex; align-items:center; gap:12px; color:var(--muted); }
+    button { border:1px solid #354458; background:#172130; color:var(--text); border-radius:7px;
+      padding:7px 12px; font-weight:700; cursor:pointer; }
+    button:disabled { opacity:.55; cursor:wait; }
+    main { width:min(1320px,calc(100% - 32px)); margin:22px auto 48px; display:grid; gap:18px; }
+    .hero { display:grid; grid-template-columns:minmax(0,2fr) minmax(250px,.8fr); gap:14px; }
+    .action-panel,.phase-panel,.metric,.section,.radar { border:1px solid var(--line);
+      background:linear-gradient(145deg,#131c27,#0e151e); border-radius:12px; }
+    .action-panel { padding:24px; border-left:4px solid var(--blue); }
+    .action-label,.metric-label,.micro-label { color:var(--muted); text-transform:uppercase;
+      letter-spacing:.1em; font-size:10px; font-weight:800; }
+    #currentAction { font-size:clamp(24px,4vw,42px); line-height:1.1; margin:8px 0 10px; }
+    #actionBasis { color:#b6c2cf; max-width:760px; }
+    .phase-panel { padding:20px; display:flex; flex-direction:column; justify-content:space-between; gap:18px; }
+    .phase-row,.fresh-row,.section-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    #marketPhase { font-size:22px; font-weight:800; }
+    .badge { display:inline-flex; align-items:center; border:1px solid #43536a; border-radius:999px;
+      padding:4px 9px; font-size:11px; font-weight:800; color:#c7d2df; }
+    .badge.fresh { border-color:#267a4c; color:var(--green); background:#10291d; }
+    .badge.stale { border-color:#926f19; color:var(--amber); background:#2a210c; }
+    .badge.unavailable { border-color:#963b48; color:var(--red); background:#2a1218; }
+    #dataTimestamp { color:var(--muted); font-variant-numeric:tabular-nums; font-size:11px; }
+    .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+    .metric { padding:16px; min-height:112px; }
+    .metric-value { margin-top:8px; font-size:28px; font-weight:850; font-variant-numeric:tabular-nums; }
+    .metric-note { margin-top:5px; color:var(--muted); font-size:11px; }
+    .section { overflow:hidden; }
+    .section-head { padding:16px 18px; border-bottom:1px solid var(--line); }
+    .section-sub { color:var(--muted); font-size:11px; }
+    #buyTargetMessage { padding:24px 18px; color:var(--muted); }
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling:touch; }
+    table { width:100%; min-width:940px; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+    th,td { padding:11px 14px; border-bottom:1px solid #202a37; text-align:right; white-space:nowrap; }
+    th { color:var(--muted); background:#0d141d; font-size:10px; text-transform:uppercase;
+      letter-spacing:.06em; position:sticky; top:0; }
+    th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3) { text-align:left; }
+    tbody tr:hover { background:#151f2b; }
+    .rank { color:var(--muted); font-weight:800; } .symbol { color:var(--blue); font-weight:850; font-size:14px; }
+    .universe { color:#bac6d3; } .positive { color:var(--green); } .negative { color:var(--red); }
+    .weight { color:var(--amber); font-weight:800; }
+    .below { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .radar { padding:17px; }
+    .radar p { margin-top:7px; color:#b4c0cd; }
+    details { margin-top:12px; border-top:1px solid var(--line); padding-top:11px; color:var(--muted); }
+    summary { color:#c8d3df; cursor:pointer; font-weight:700; }
+    #qualityDisclosure { margin-top:8px; }
+    @media (max-width:800px) {
+      header { align-items:flex-start; padding:14px 16px; } .header-actions { flex-direction:column; align-items:flex-end; }
+      main { width:min(100% - 20px,1320px); margin-top:12px; } .hero,.below { grid-template-columns:1fr; }
+      .metrics { grid-template-columns:1fr 1fr; } .action-panel { padding:18px; }
+      th,td { padding:10px 11px; }
+      th:nth-child(n+4),td:nth-child(n+4) { font-size:11px; }
+    }
+    @media (max-width:440px) { .metrics { grid-template-columns:1fr 1fr; gap:8px; }
+      .metric { min-height:96px; padding:13px; } .metric-value { font-size:22px; }
+      #currentAction { font-size:26px; } }
+  </style>
+</head>
+<body>
+<header>
+  <div><div class="eyebrow">15 Minute Snapshot</div><h1>Market Vital Sign 决策台</h1></div>
+  <div class="header-actions"><span id="dataTimestamp">数据时间 —</span><button id="runBtn" type="button">刷新快照</button></div>
+</header>
+""" + _NAV + r"""
+<main>
+  <section class="hero" aria-labelledby="currentAction">
+    <div class="action-panel"><div class="action-label">当前行动</div><h2 id="currentAction">正在加载</h2>
+      <p id="actionBasis">正在读取最新预计算快照。</p></div>
+    <div class="phase-panel"><div><div class="micro-label">市场阶段</div><div class="phase-row">
+      <span id="marketPhase">—</span><span class="badge" id="phaseBadge">等待</span></div></div>
+      <div class="fresh-row"><span class="micro-label">快照状态</span><span class="badge" id="freshnessBadge">加载中</span></div></div>
+  </section>
+  <section class="metrics" aria-label="市场关键指标">
+    <article class="metric"><div class="metric-label">Strong</div><div class="metric-value positive" id="strongValue">—</div><div class="metric-note">强势股占比</div></article>
+    <article class="metric"><div class="metric-label">Breakdown</div><div class="metric-value negative" id="breakdownValue">—</div><div class="metric-note">破位股占比</div></article>
+    <article class="metric"><div class="metric-label">NTSS</div><div class="metric-value" id="ntssValue">—</div><div class="metric-note" id="ntssState">市场中轴</div></article>
+    <article class="metric"><div class="metric-label">Momentum</div><div class="metric-value" id="momentumValue">—</div><div class="metric-note">净动量</div></article>
+  </section>
+  <section class="section" aria-labelledby="targetsTitle">
+    <div class="section-head"><div><h2 id="targetsTitle">买入标的</h2><div class="section-sub">NASDAQ 100 与 S&amp;P 500 合并 · 默认按排名、市场、代码排序</div></div><span class="badge" id="targetCount">0 个</span></div>
+    <p id="buyTargetMessage">正在加载买入标的…</p>
+    <div class="table-scroll"><table id="buyTargetTable" aria-label="买入标的专业表格" hidden>
+      <thead><tr><th scope="col">排名</th><th scope="col">标的</th><th scope="col">市场</th><th scope="col">MA200 距离</th>
+        <th scope="col">目标权重</th><th scope="col">最新价</th><th scope="col">ADV 排名</th><th scope="col">数据时间</th></tr></thead>
+      <tbody id="buyTargetBody"></tbody></table></div>
+  </section>
+  <section class="below">
+    <article class="radar" id="shortRadar"><div class="micro-label">空头雷达</div><h2 id="shortRadarTitle">等待市场状态</h2><p id="shortRadarText">只有在市场阶段转弱时才评估对冲；本页不自动生成交易。</p></article>
+    <article class="radar"><div class="micro-label">数据质量</div><h2>预计算快照</h2><p id="qualityDisclosure">正在检查覆盖率与新鲜度。</p>
+      <details><summary>方法说明</summary><p>候选股先按 63 日平均成交额筛选，再在流动性池中按距离 MA200 排名；目标权重为 60% / 20% / 20%。指标缺失时显示“—”，不会用旧值补齐。</p></details></article>
+  </section>
+</main>
+<script>
+  const F1 = new Intl.NumberFormat("zh-CN",{minimumFractionDigits:1,maximumFractionDigits:1});
+  const F2 = new Intl.NumberFormat("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const PHASES = {A:"防守",B:"观察",C:"进攻",D:"风险"};
+  function finite(value){ return typeof value === "number" && Number.isFinite(value); }
+  function valueFrom(status,names){ for(const name of names){ if(finite(status[name])) return status[name]; } return null; }
+  function setText(id,value){ document.getElementById(id).textContent=String(value); }
+  function cell(value,className){ const td=document.createElement("td"); td.textContent=String(value); if(className) td.className=className; return td; }
+  function universeName(value){ return value === "nasdaq100" ? "NASDAQ 100" : value === "sp500" ? "S&P 500" : "—"; }
+  function targetRow(target){
+    const tr=document.createElement("tr");
+    const distance=finite(target.distance_pct)?F1.format(target.distance_pct)+"%":"—";
+    const price=finite(target.close)?"$"+F2.format(target.close):"—";
+    const adv=Number.isInteger(target.adv_rank)?"#"+target.adv_rank:"—";
+    const weight=finite(target.target_weight_pct)?F1.format(target.target_weight_pct)+"%":"—";
+    tr.append(cell(target.rank,"rank"),cell(target.symbol,"symbol"),cell(universeName(target.universe),"universe"),
+      cell(distance,finite(target.distance_pct)?(target.distance_pct>=0?"positive":"negative"):""),cell(weight,"weight"),
+      cell(price),cell(adv),cell(target.last_date||"—"));
+    return tr;
+  }
+  function sortedTargets(targets){ return [...targets].sort((a,b)=>a.rank-b.rank || a.universe.localeCompare(b.universe) || a.symbol.localeCompare(b.symbol)); }
+  function renderTargets(data){
+    const rows=sortedTargets(Array.isArray(data.buy_targets)?data.buy_targets:[]);
+    const table=document.getElementById("buyTargetTable"), message=document.getElementById("buyTargetMessage");
+    document.getElementById("buyTargetBody").replaceChildren(...rows.map(targetRow));
+    setText("targetCount",rows.length+" 个"); table.hidden=rows.length===0; message.hidden=rows.length>0;
+    if(!rows.length) message.textContent="当前快照没有可执行买入标的。";
+  }
+  function renderStatus(data){
+    const status=data.market_status||{}, phase=String(status.phase_code||status.phase||"—");
+    const strong=valueFrom(status,["strong","s"]), breakdown=valueFrom(status,["breakdown","bd"]);
+    const ntss=valueFrom(status,["ntss","mid"]), momentum=valueFrom(status,["momentum","mom"]);
+    setText("marketPhase",PHASES[phase]||phase); setText("phaseBadge",phase==="—"?"未知":"阶段 "+phase);
+    setText("strongValue",strong===null?"—":F1.format(strong)+"%"); setText("breakdownValue",breakdown===null?"—":F1.format(breakdown)+"%");
+    setText("ntssValue",ntss===null?"—":F2.format(ntss)); setText("momentumValue",momentum===null?"—":F2.format(momentum));
+    setText("ntssState",status.ntss_state||"市场中轴");
+    const action=status.action || (phase==="C"?"按计划选择强势标的":phase==="D"?"降低仓位，评估对冲":phase==="A"?"保持防守，等待确认":"耐心观察，不追涨");
+    setText("currentAction",action); setText("actionBasis",status.basis||"依据最新市场阶段与预计算候选股执行。");
+    const defensive=phase==="D"||phase==="A"; setText("shortRadarTitle",defensive?"风险阶段已激活":"当前无需主动做空");
+    setText("shortRadarText",defensive?"优先控制总仓位，并结合 15 分钟宽度页确认 Breakdown 与 NTSS。":"继续监测阶段切换；仅在转弱确认后评估对冲。");
+  }
+  function renderQuality(data){
+    const quality=data.quality||{}, badge=document.getElementById("freshnessBadge");
+    badge.className="badge "+(data.stale?"stale":"fresh"); badge.textContent=data.stale?"数据已过期":"数据正常";
+    setText("dataTimestamp","数据时间 "+String(data.generated_at||"—").replace("T"," "));
+    const parts=[]; ["nasdaq100","sp500"].forEach(key=>{ const q=quality[key]; if(q&&finite(q.valid_count)) parts.push(universeName(key)+" "+q.valid_count+" 只有效"); });
+    if(quality.session_status) parts.push(quality.session_status==="open"?"交易时段":"非交易时段");
+    if(data.stale) parts.push("页面继续展示上次成功快照");
+    setText("qualityDisclosure",parts.length?parts.join(" · "):"覆盖率未提供；页面仅展示已验证快照字段。");
+  }
+  function setUnavailable(message){
+    setText("currentAction","暂缓交易"); setText("actionBasis","快照不可用："+message); setText("marketPhase","—");
+    const badge=document.getElementById("freshnessBadge"); badge.className="badge unavailable"; badge.textContent="不可用";
+    ["strongValue","breakdownValue","ntssValue","momentumValue"].forEach(id=>setText(id,"—"));
+    const table=document.getElementById("buyTargetTable"); table.hidden=true; const msg=document.getElementById("buyTargetMessage"); msg.hidden=false; msg.textContent="无法读取买入标的。";
+    setText("qualityDisclosure","请等待下一次预计算任务成功发布；服务会保留最后一次有效快照。 ");
+  }
+  async function runSignal(){
+    const button=document.getElementById("runBtn"); button.disabled=true;
+    try { const response=await fetch("/api/signals"); const data=await response.json(); if(!response.ok) throw new Error(data.error||"请求失败");
+      renderStatus(data); renderQuality(data); renderTargets(data);
+    } catch(error) { setUnavailable(error instanceof Error?error.message:"未知错误"); }
+    finally { button.disabled=false; }
+  }
+  document.getElementById("runBtn").addEventListener("click",runSignal); runSignal();
+</script>
+</body></html>
 """
 
 # ── HTML: breadth page ────────────────────────────────────────────────────────

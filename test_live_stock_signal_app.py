@@ -212,3 +212,35 @@ def test_actual_builder_payload_is_served_and_homepage_consumes_buy_targets(tmp_
     assert "data.sp500" not in html
     assert "innerHTML" not in html
     assert "textContent" in html
+
+
+def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    html = TestClient(app_module.app).get("/").text
+
+    # Stable action/freshness and four-indicator contracts.
+    for element_id in (
+        "currentAction", "marketPhase", "freshnessBadge", "dataTimestamp",
+        "strongValue", "breakdownValue", "ntssValue", "momentumValue",
+        "buyTargetBody", "buyTargetMessage", "shortRadar", "qualityDisclosure",
+    ):
+        assert f'id="{element_id}"' in html
+
+    # One combined, semantic professional table in the approved C layout.
+    assert '<table id="buyTargetTable"' in html
+    for heading in (
+        "排名", "标的", "市场", "MA200 距离", "目标权重", "最新价", "ADV 排名", "数据时间",
+    ):
+        assert f"<th" in html and heading in html
+    assert "NASDAQ 100 / QQQ" not in html
+    assert "S&amp;P 500 / SPY" not in html
+
+    # Snapshot data is rendered through safe DOM APIs, never string HTML.
+    assert "data.buy_targets" in html
+    assert "document.createElement" in html
+    assert ".textContent" in html
+    assert "innerHTML" not in html
+    assert "localeCompare" in html
+    assert "overflow-x: auto" in html
