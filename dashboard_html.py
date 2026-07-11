@@ -20,356 +20,6 @@ _NAV = r"""
 """
 
 # ── HTML: signals page ────────────────────────────────────────────────────────
-_LEGACY_SIGNALS_HTML = r"""<!doctype html>
-<html lang="zh">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Market Vital Sign</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: #0d1117;
-      color: #e6edf3;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 13px;
-      min-height: 100vh;
-    }
-    header {
-      background: #161b22;
-      border-bottom: 1px solid #30363d;
-      padding: 14px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-    }
-    .hd-title { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
-    .hd-sub   { font-size: 11px; color: #8b949e; margin-top: 3px; }
-    .hd-right { display: flex; align-items: center; gap: 10px; }
-    #clock { font-size: 12px; color: #8b949e; font-variant-numeric: tabular-nums; }
-    #runBtn {
-      height: 30px; padding: 0 12px;
-      background: #21262d; border: 1px solid #30363d;
-      color: #c9d1d9; border-radius: 6px;
-      font-size: 12px; font-weight: 600; cursor: pointer;
-    }
-    #runBtn:hover { background: #30363d; border-color: #484f58; }
-    #runBtn:disabled { opacity: .5; cursor: wait; }
-
-    main { max-width: 1280px; margin: 0 auto; padding: 20px 16px; display: grid; gap: 32px; }
-
-    .sec-hd {
-      display: flex; align-items: baseline;
-      justify-content: space-between;
-      padding-bottom: 10px;
-      border-bottom: 1px solid #21262d;
-      margin-bottom: 14px;
-    }
-    .sec-title { font-size: 15px; font-weight: 700; }
-    .sec-meta  { font-size: 11px; color: #8b949e; }
-
-    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    .cards.three { grid-template-columns: 1fr 1fr 1fr; }
-
-    .status-panel {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      padding: 13px 15px;
-      display: grid;
-      grid-template-columns: 1.1fr 1.6fr;
-      gap: 12px;
-      align-items: center;
-    }
-    .status-main { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-    .badge {
-      display: inline-flex; align-items: center;
-      border-radius: 999px; padding: 3px 10px;
-      font-size: 11px; font-weight: 800;
-      border: 1px solid #30363d;
-    }
-    .badge.safe { color: #3fb950; border-color: #238636; background: rgba(46,160,67,.12); }
-    .badge.caution { color: #d29922; border-color: #9e6a03; background: rgba(187,128,9,.12); }
-    .badge.panic { color: #f85149; border-color: #da3633; background: rgba(248,81,73,.10); }
-    .badge.wait { color: #8b949e; background: #21262d; }
-    .status-title { font-size: 14px; font-weight: 800; }
-    .status-detail { color: #8b949e; font-size: 12px; line-height: 1.45; }
-
-    .card {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 10px;
-      overflow: hidden;
-    }
-    .card-hd {
-      padding: 11px 15px 11px 13px;
-      border-bottom: 1px solid #30363d;
-      display: flex; justify-content: space-between; align-items: center;
-    }
-    .card-hd.stable { border-left: 3px solid #3fb950; }
-    .card-hd.offens { border-left: 3px solid #d29922; }
-    .card-hd.short  { border-left: 3px solid #f85149; }
-    .card-title { font-size: 13px; font-weight: 700; }
-    .card-title.stable { color: #3fb950; }
-    .card-title.offens { color: #d29922; }
-    .card-title.short  { color: #f85149; }
-    .card-perf { font-size: 11px; color: #484f58; }
-    .card-note {
-      padding: 7px 15px;
-      font-size: 11px; color: #484f58;
-      background: #0d1117;
-      border-top: 1px solid #21262d;
-    }
-
-    .msg-row { padding: 16px 15px; color: #8b949e; font-size: 13px; }
-    .msg-row.err { color: #f85149; }
-
-    table { width: 100%; border-collapse: collapse; }
-    th, td {
-      padding: 9px 15px;
-      text-align: right;
-      white-space: nowrap;
-      border-bottom: 1px solid #21262d;
-    }
-    th:first-child, td:first-child { text-align: left; }
-    th {
-      font-size: 10px; font-weight: 700;
-      color: #484f58; text-transform: uppercase; letter-spacing: .05em;
-      background: #0d1117;
-    }
-    tbody tr { transition: background .1s; }
-    tbody tr:hover { background: rgba(139,148,158,.05); }
-    tbody tr:last-child td { border-bottom: none; }
-
-    .sym { font-size: 14px; font-weight: 800; color: #58a6ff; letter-spacing: -.02em; }
-    .rk {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 22px; height: 22px; border-radius: 50%;
-      font-size: 11px; font-weight: 800;
-    }
-    .rk.s-hi  { background: #3fb950; color: #0d1117; }
-    .rk.s-lo  { background: #21262d; color: #8b949e; }
-    .rk.o-hi  { background: #d29922; color: #0d1117; }
-    .rk.x-hi  { background: #f85149; color: #0d1117; }
-    .pos { color: #3fb950; font-weight: 600; font-variant-numeric: tabular-nums; }
-    .neg { color: #f85149; font-weight: 600; font-variant-numeric: tabular-nums; }
-    .na  { color: #484f58; }
-    .num { color: #c9d1d9; font-variant-numeric: tabular-nums; }
-
-    @media (max-width: 760px) {
-      .cards, .cards.three  { grid-template-columns: 1fr; }
-      .status-panel { grid-template-columns: 1fr; }
-      header  { flex-direction: column; align-items: flex-start; }
-      main    { padding: 12px; gap: 20px; }
-    }
-  </style>
-</head>
-<body>
-<header>
-  <div>
-    <div class="hd-title">Market Vital Sign</div>
-    <div class="hd-sub">信号激活时参考 · 数据来自 Yahoo Finance</div>
-  </div>
-  <div class="hd-right">
-    <span id="clock">—</span>
-    <button id="runBtn">⟳ 刷新</button>
-  </div>
-</header>
-""" + _NAV + r"""
-<main>
-  <div class="status-panel">
-    <div class="status-main">
-      <span class="badge wait" id="signalBadge">状态加载中</span>
-      <span class="status-title" id="statusTitle">等待市场宽度数据</span>
-    </div>
-    <div class="status-detail" id="statusDetail">正在读取最新 Strong / Breakdown / NTSS。</div>
-  </div>
-  <div>
-    <div class="sec-hd">
-      <span class="sec-title">NASDAQ 100 / QQQ</span>
-      <span class="sec-meta" id="nasdaqMeta">—</span>
-    </div>
-    <div class="cards three">
-      <div class="card">
-        <div class="card-hd stable">
-          <span class="card-title stable">稳健核心 · ADV Top5</span>
-          <span class="card-perf">CAGR 44–49% · MaxDD ~22%</span>
-        </div>
-        <div class="msg-row" id="nasdaqAdvMsg">正在加载…</div>
-        <table id="nasdaqAdvTbl" style="display:none">
-          <thead><tr><th>股票</th><th>#</th><th>收盘价</th><th>距 MA200</th><th>63日均量</th></tr></thead>
-          <tbody id="nasdaqAdvBody"></tbody>
-        </table>
-        <div class="card-note">深绿 Top3 建议买入 · 浅色 4–5 为可选扩展</div>
-      </div>
-      <div class="card">
-        <div class="card-hd offens">
-          <span class="card-title offens">进攻首选 · ADV Top10 → MA200 Top3</span>
-          <span class="card-perf">CAGR 52% · MaxDD ~32%</span>
-        </div>
-        <div class="msg-row" id="nasdaqMaMsg">正在加载…</div>
-        <table id="nasdaqMaTbl" style="display:none">
-          <thead><tr><th>标的</th><th>排名</th><th>收盘价</th><th>MA200</th><th>距 MA200</th><th>权重</th></tr></thead>
-          <tbody id="nasdaqMaBody"></tbody>
-        </table>
-        <div class="card-note">ADV Top10 中选距 MA200 最远的 3 只 · 动量最强但回撤更大</div>
-      </div>
-      <div class="card">
-        <div class="card-hd short">
-          <span class="card-title short">空头保险 · QQQ 70% + 弱股 30%</span>
-          <span class="card-perf" id="nasdaqShortType">Gap Short</span>
-        </div>
-        <div class="msg-row" id="nasdaqShortMsg">正在加载…</div>
-        <table id="nasdaqShortTbl" style="display:none">
-          <thead><tr><th>标的</th><th>权重</th><th>收盘价</th><th>MA200</th><th>距 MA200 ↓</th></tr></thead>
-          <tbody id="nasdaqShortBody"></tbody>
-        </table>
-        <div class="card-note">仅在空仓期满足 Gap Short 时参考 · 弱股来自 ADV Top30 中 MA200 最弱 Top1</div>
-      </div>
-    </div>
-  </div>
-  <div>
-    <div class="sec-hd">
-      <span class="sec-title">S&amp;P 500 / SPY</span>
-      <span class="sec-meta" id="sp500Meta">—</span>
-    </div>
-    <div class="cards three">
-      <div class="card">
-        <div class="card-hd stable">
-          <span class="card-title stable">稳健核心 · ADV Top5</span>
-          <span class="card-perf">流动性加权 · 等权买入</span>
-        </div>
-        <div class="msg-row" id="sp500AdvMsg">正在加载…</div>
-        <table id="sp500AdvTbl" style="display:none">
-          <thead><tr><th>股票</th><th>#</th><th>收盘价</th><th>距 MA200</th><th>63日均量</th></tr></thead>
-          <tbody id="sp500AdvBody"></tbody>
-        </table>
-        <div class="card-note">深绿 Top3 · 同公司双重股权已去重</div>
-      </div>
-      <div class="card">
-        <div class="card-hd offens">
-          <span class="card-title offens">进攻首选 · ADV Top10 → MA200 Top3</span>
-          <span class="card-perf">动量最强 3 只</span>
-        </div>
-        <div class="msg-row" id="sp500MaMsg">正在加载…</div>
-        <table id="sp500MaTbl" style="display:none">
-          <thead><tr><th>标的</th><th>排名</th><th>收盘价</th><th>MA200</th><th>距 MA200</th><th>权重</th></tr></thead>
-          <tbody id="sp500MaBody"></tbody>
-        </table>
-        <div class="card-note">ADV Top10 池内按 MA200 距离排序，取前 3</div>
-      </div>
-      <div class="card">
-        <div class="card-hd short">
-          <span class="card-title short">空头保险 · SPY 70% + 弱股 30%</span>
-          <span class="card-perf" id="sp500ShortType">Gap Short</span>
-        </div>
-        <div class="msg-row" id="sp500ShortMsg">正在加载…</div>
-        <table id="sp500ShortTbl" style="display:none">
-          <thead><tr><th>标的</th><th>权重</th><th>收盘价</th><th>MA200</th><th>距 MA200 ↓</th></tr></thead>
-          <tbody id="sp500ShortBody"></tbody>
-        </table>
-        <div class="card-note">仅在空仓期满足 Gap Short 时参考 · 弱股来自 ADV Top30 中 MA200 最弱 Top1</div>
-      </div>
-    </div>
-  </div>
-</main>
-<script>
-  const P2 = new Intl.NumberFormat("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 });
-  const P1 = new Intl.NumberFormat("en-US", { minimumFractionDigits:1, maximumFractionDigits:1 });
-  const P0 = new Intl.NumberFormat("en-US", { maximumFractionDigits:0 });
-  function money(v) {
-    if (v >= 1e9) return "$" + P2.format(v/1e9) + "B";
-    if (v >= 1e6) return "$" + P2.format(v/1e6) + "M";
-    return "$" + P0.format(v);
-  }
-  function targetRow(r) {
-    const tr = document.createElement("tr");
-    const price = Number.isFinite(r.close) ? "$" + P2.format(r.close) : "—";
-    const ma200 = Number.isFinite(r.ma200) ? "$" + P2.format(r.ma200) : "—";
-    const distance = Number.isFinite(r.distance_pct) ? P1.format(r.distance_pct) + "%" : "—";
-    [r.symbol, r.rank, price, ma200, distance, r.target_weight_pct + "%"].forEach((value, index) => {
-      const td = document.createElement("td");
-      td.textContent = String(value);
-      if (index === 0) td.className = "sym";
-      if (index === 1) td.className = "rk o-hi";
-      tr.appendChild(td);
-    });
-    return tr;
-  }
-  function show(tblId, msgId, rows) {
-    const body = document.getElementById(tblId.replace("Tbl","Body"));
-    body.replaceChildren(...rows.map(targetRow));
-    document.getElementById(msgId).style.display = "none";
-    document.getElementById(tblId).style.display = "";
-  }
-  function renderTargets(data, universe, prefix) {
-    const rows = data.buy_targets.filter(r => r.universe === universe);
-    show(prefix+"MaTbl", prefix+"MaMsg", rows);
-    ["AdvMsg","ShortMsg"].forEach(s => {
-      const el = document.getElementById(prefix+s);
-      el.textContent = "预计算模式"; el.style.display = "";
-    });
-    ["AdvTbl","ShortTbl"].forEach(s => document.getElementById(prefix+s).style.display = "none");
-    document.getElementById(prefix+"Meta").textContent = rows.length + " 个买入标的";
-  }
-  function renderMarketStatus(status) {
-    window.MARKET_STATUS = status || {};
-    const badge = document.getElementById("signalBadge");
-    const title = document.getElementById("statusTitle");
-    const detail = document.getElementById("statusDetail");
-    const cls = status.phase_class || "wait";
-    badge.className = "badge " + cls;
-    badge.textContent = status.label || "状态未知";
-    title.textContent = (status.phase_code ? status.phase_code + " · " : "") + (status.phase || "等待宽度数据");
-    const bits = [];
-    if (status.strong != null) bits.push("Strong " + P1.format(status.strong) + "%");
-    if (status.breakdown != null) bits.push("BD " + P1.format(status.breakdown) + "%");
-    if (status.ntss != null) bits.push("NTSS " + P2.format(status.ntss));
-    if (status.ntss_state) bits.push(status.ntss_state);
-    detail.textContent = bits.join(" · ") + (bits.length ? " · " : "") + (status.action || status.basis || "");
-  }
-  function setLoading() {
-    renderMarketStatus({label:"状态加载中", phase:"等待市场宽度数据", phase_class:"wait",
-                        action:"正在读取最新 Strong / Breakdown / NTSS。"});
-    ["nasdaq","sp500"].forEach(p => {
-      ["AdvMsg","MaMsg","ShortMsg"].forEach(s => {
-        const el = document.getElementById(p+s);
-        el.textContent = "正在抓取并计算…"; el.className = "msg-row"; el.style.display = "";
-      });
-      ["AdvTbl","MaTbl","ShortTbl"].forEach(s => { document.getElementById(p+s).style.display = "none"; });
-      document.getElementById(p+"Meta").textContent = "—";
-    });
-  }
-  function setError(msg) {
-    ["nasdaq","sp500"].forEach(p =>
-      ["AdvMsg","MaMsg","ShortMsg"].forEach(s => {
-        const el = document.getElementById(p+s);
-        el.textContent = "错误: " + msg; el.className = "msg-row err";
-      })
-    );
-  }
-  async function runSignal() {
-    const btn = document.getElementById("runBtn");
-    btn.disabled = true; setLoading();
-    try {
-      const res  = await fetch("/api/signals");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "请求失败");
-      document.getElementById("clock").textContent = data.generated_at.replace("T"," ");
-      renderMarketStatus(data.market_status);
-      renderTargets(data, "nasdaq100", "nasdaq");
-      renderTargets(data, "sp500", "sp500");
-    } catch(err) { setError(err.message); }
-    finally { btn.disabled = false; }
-  }
-  document.getElementById("runBtn").addEventListener("click", runSignal);
-  runSignal();
-</script>
-</body>
-</html>
-"""
-
 # Action-first signals dashboard.  Kept next to the breadth page so the
 # display-only server can continue importing one dependency-free module.
 SIGNALS_HTML = r"""<!doctype html>
@@ -447,6 +97,17 @@ SIGNALS_HTML = r"""<!doctype html>
     @media (max-width:440px) { .metrics { grid-template-columns:1fr 1fr; gap:8px; }
       .metric { min-height:96px; padding:13px; } .metric-value { font-size:22px; }
       #currentAction { font-size:26px; } }
+    @media (max-width:640px) {
+      #buyTargetTable { min-width:100%; }
+      #buyTargetTable th:nth-child(3),#buyTargetTable td:nth-child(3),
+      #buyTargetTable th:nth-child(4),#buyTargetTable td:nth-child(4),
+      #buyTargetTable th:nth-child(6),#buyTargetTable td:nth-child(6),
+      #buyTargetTable th:nth-child(7),#buyTargetTable td:nth-child(7),
+      #buyTargetTable th:nth-child(8),#buyTargetTable td:nth-child(8) { display:none; }
+      #buyTargetTable th:nth-child(1),#buyTargetTable td:nth-child(1),
+      #buyTargetTable th:nth-child(2),#buyTargetTable td:nth-child(2),
+      #buyTargetTable th:nth-child(5),#buyTargetTable td:nth-child(5) { display:table-cell; }
+    }
   </style>
 </head>
 <body>
@@ -513,8 +174,10 @@ SIGNALS_HTML = r"""<!doctype html>
   }
   function renderStatus(data){
     const status=data.market_status||{}, phase=String(status.phase_code||status.phase||"—");
-    const strong=valueFrom(status,["strong","s"]), breakdown=valueFrom(status,["breakdown","bd"]);
-    const ntss=valueFrom(status,["ntss","mid"]), momentum=valueFrom(status,["momentum","mom"]);
+    const strong=finite(status.strong)?status.strong:valueFrom(status,["s"]);
+    const breakdown=finite(status.breakdown)?status.breakdown:valueFrom(status,["bd"]);
+    const ntss=finite(status.ntss)?status.ntss:valueFrom(status,["mid"]);
+    const momentum=finite(status.momentum)?status.momentum:valueFrom(status,["mom"]);
     setText("marketPhase",PHASES[phase]||phase); setText("phaseBadge",phase==="—"?"未知":"阶段 "+phase);
     setText("strongValue",strong===null?"—":F1.format(strong)+"%"); setText("breakdownValue",breakdown===null?"—":F1.format(breakdown)+"%");
     setText("ntssValue",ntss===null?"—":F2.format(ntss)); setText("momentumValue",momentum===null?"—":F2.format(momentum));
@@ -528,20 +191,38 @@ SIGNALS_HTML = r"""<!doctype html>
     const quality=data.quality||{}, badge=document.getElementById("freshnessBadge");
     badge.className="badge "+(data.stale?"stale":"fresh"); badge.textContent=data.stale?"数据已过期":"数据正常";
     setText("dataTimestamp","数据时间 "+String(data.generated_at||"—").replace("T"," "));
-    const parts=[]; ["nasdaq100","sp500"].forEach(key=>{ const q=quality[key]; if(q&&finite(q.valid_count)) parts.push(universeName(key)+" "+q.valid_count+" 只有效"); });
+    const parts=[]; ["nasdaq100","sp500"].forEach(key=>{ const q=quality[key]; if(!q) return;
+      const market=universeName(key); if(finite(q.valid_count)) parts.push(market+" 有效 "+q.valid_count);
+      if(finite(q.failed_count)) parts.push(market+" 失败 "+q.failed_count);
+      if(q.universe_source) parts.push(market+" 来源 "+q.universe_source);
+      if(q.universe_warning) parts.push(market+" 警告 "+q.universe_warning);
+      if(q.universe_error) parts.push(market+" 错误 "+q.universe_error);
+      const candidateCount=Array.isArray(data.buy_targets)?data.buy_targets.filter(target=>target.universe===key).length:0;
+      if(candidateCount<3) parts.push(market+" 候选不足 "+candidateCount+"/3");
+    });
     if(quality.session_status) parts.push(quality.session_status==="open"?"交易时段":"非交易时段");
     if(data.stale) parts.push("页面继续展示上次成功快照");
     setText("qualityDisclosure",parts.length?parts.join(" · "):"覆盖率未提供；页面仅展示已验证快照字段。");
   }
   function setUnavailable(message){
     setText("currentAction","暂缓交易"); setText("actionBasis","快照不可用："+message); setText("marketPhase","—");
+    setText("phaseBadge","未知"); setText("dataTimestamp","数据时间 —"); setText("targetCount","0 个");
     const badge=document.getElementById("freshnessBadge"); badge.className="badge unavailable"; badge.textContent="不可用";
     ["strongValue","breakdownValue","ntssValue","momentumValue"].forEach(id=>setText(id,"—"));
     const table=document.getElementById("buyTargetTable"); table.hidden=true; const msg=document.getElementById("buyTargetMessage"); msg.hidden=false; msg.textContent="无法读取买入标的。";
+    setText("shortRadarTitle","等待有效快照"); setText("shortRadarText","当前不提供空头判断，请等待下一次成功发布。");
     setText("qualityDisclosure","请等待下一次预计算任务成功发布；服务会保留最后一次有效快照。 ");
   }
+  function setLoading(){
+    setText("currentAction","正在加载"); setText("actionBasis","正在读取最新预计算快照。"); setText("marketPhase","—");
+    setText("phaseBadge","等待"); setText("dataTimestamp","数据时间 —"); setText("targetCount","0 个");
+    const badge=document.getElementById("freshnessBadge"); badge.className="badge"; badge.textContent="加载中";
+    ["strongValue","breakdownValue","ntssValue","momentumValue"].forEach(id=>setText(id,"—"));
+    document.getElementById("buyTargetBody").replaceChildren(); document.getElementById("buyTargetTable").hidden=true;
+    const message=document.getElementById("buyTargetMessage"); message.hidden=false; message.textContent="正在加载买入标的…";
+  }
   async function runSignal(){
-    const button=document.getElementById("runBtn"); button.disabled=true;
+    const button=document.getElementById("runBtn"); button.disabled=true; setLoading();
     try { const response=await fetch("/api/signals"); const data=await response.json(); if(!response.ok) throw new Error(data.error||"请求失败");
       renderStatus(data); renderQuality(data); renderTargets(data);
     } catch(error) { setUnavailable(error instanceof Error?error.message:"未知错误"); }

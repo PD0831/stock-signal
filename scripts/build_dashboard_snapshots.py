@@ -216,6 +216,38 @@ def _quality(signals: Mapping[str, Any]) -> dict[str, Any]:
     return quality
 
 
+def _market_status(record: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Project the latest breadth row into the dashboard's stable UI contract."""
+    if record is None:
+        return {}
+    phase_code = record.get("phase_code", record.get("phase"))
+    phases = {"A": "防守", "B": "观察", "C": "进攻", "D": "风险"}
+    actions = {
+        "A": "保持防守，等待确认",
+        "B": "耐心观察，不追涨",
+        "C": "按计划选择强势标的",
+        "D": "降低仓位，评估对冲",
+    }
+    status = {
+        "phase_code": phase_code,
+        "phase": phases.get(phase_code, phase_code),
+        "action": actions.get(phase_code, "等待市场状态确认"),
+        "as_of": record.get("t"),
+    }
+    aliases = {
+        "strong": ("strong", "s"),
+        "breakdown": ("breakdown", "bd"),
+        "ntss": ("ntss", "mid"),
+        "momentum": ("momentum", "mom"),
+    }
+    for target, names in aliases.items():
+        for name in names:
+            if record.get(name) is not None:
+                status[target] = record[name]
+                break
+    return status
+
+
 def run(
     output_dir: str | os.PathLike[str],
     *,
@@ -234,11 +266,7 @@ def run(
     raw_breadth = provider.compute_breadth()
     breadth_records = list(raw_breadth.get("records", []))
     latest = breadth_records[-1] if breadth_records else None
-    market_status = (
-        {"phase_code": latest.get("phase_code"), "as_of": latest.get("t")}
-        if latest is not None
-        else None
-    )
+    market_status = _market_status(latest)
     dashboard = build_dashboard_snapshot(
         {name: result.get("ma200_selected", []) for name, result in signals.items()},
         generated_at=generated_at,

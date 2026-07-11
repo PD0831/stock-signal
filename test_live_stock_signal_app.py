@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from scripts.build_dashboard_snapshots import build_dashboard_snapshot, build_breadth_snapshot
+from scripts.build_dashboard_snapshots import build_dashboard_snapshot, build_breadth_snapshot, run
 
 
 def _write_pair(tmp_path, *, generated_at=None, schema_version=1, mismatch=False):
@@ -230,10 +230,12 @@ def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monk
 
     # One combined, semantic professional table in the approved C layout.
     assert '<table id="buyTargetTable"' in html
-    for heading in (
+    headings = (
         "排名", "标的", "市场", "MA200 距离", "目标权重", "最新价", "ADV 排名", "数据时间",
-    ):
-        assert f"<th" in html and heading in html
+    )
+    assert [html.index(f">{heading}</th>") for heading in headings] == sorted(
+        html.index(f">{heading}</th>") for heading in headings
+    )
     assert "NASDAQ 100 / QQQ" not in html
     assert "S&amp;P 500 / SPY" not in html
 
@@ -244,3 +246,40 @@ def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monk
     assert "innerHTML" not in html
     assert "localeCompare" in html
     assert "overflow-x: auto" in html
+    assert "@media (max-width:640px)" in html
+    assert "nth-child(3)" in html and "nth-child(5)" in html
+    assert "display:none" in html
+    assert "setText(\"targetCount\",\"0 个\")" in html
+    assert "setText(\"dataTimestamp\",\"数据时间 —\")" in html
+    assert "universe_source" in html
+    assert "universe_warning" in html
+    assert "候选不足" in html
+
+
+def test_builder_market_status_contract_is_consumed_by_homepage(tmp_path, monkeypatch):
+    now = datetime.now(timezone.utc)
+    class Provider:
+        def compute_signals(self, universe):
+            return {"valid_count": 100, "failed_count": 2, "ma200_selected": [
+                {"symbol": "AAPL", "rank": 1, "distance_pct": 12.5}
+            ]}
+
+        def compute_breadth(self):
+            return {"n_stocks": 500, "n_valid_15m": 498, "records": [{
+                "t": now.isoformat(), "phase_code": "C", "s": 57.5,
+                "bd": 13.5, "mid": 1.25, "mom": 4.5,
+            }]}
+
+    run(tmp_path, provider=Provider(), generated_at=now)
+    client = TestClient(_import_app(monkeypatch, tmp_path).app)
+    response = client.get("/api/signals")
+    assert response.status_code == 200
+    assert response.json()["market_status"] | {"as_of": now.isoformat()} == {
+        "phase_code": "C", "phase": "进攻", "action": "按计划选择强势标的",
+        "as_of": now.isoformat(), "strong": 57.5, "breakdown": 13.5,
+        "ntss": 1.25, "momentum": 4.5,
+    }
+    html = client.get("/").text
+
+    for contract_value in ("strong", "breakdown", "ntss", "momentum", "action", "distance_pct"):
+        assert f'status.{contract_value}' in html or f'target.{contract_value}' in html

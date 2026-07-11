@@ -683,6 +683,8 @@ class FakeProvider:
                     "t": "2026-07-11T09:30:00-04:00",
                     "s": 51.0,
                     "bd": 22.0,
+                    "mid": 1.25,
+                    "mom": 4.5,
                     "phase_code": "B",
                 }
             ],
@@ -703,6 +705,12 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
     assert dashboard["market_status"] == {
         "phase_code": "B",
         "as_of": "2026-07-11T09:30:00-04:00",
+        "strong": 51.0,
+        "breakdown": 22.0,
+        "ntss": 1.25,
+        "momentum": 4.5,
+        "phase": "观察",
+        "action": "耐心观察，不追涨",
     }
     assert dashboard["quality"] == {
         "nasdaq100": {"valid_count": 99, "failed_count": 2},
@@ -722,6 +730,8 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
             "t": "2026-07-11T09:30:00-04:00",
             "s": 51.0,
             "bd": 22.0,
+            "mid": 1.25,
+            "mom": 4.5,
             "phase_code": "B",
         }
     ]
