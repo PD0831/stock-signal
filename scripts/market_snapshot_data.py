@@ -19,6 +19,8 @@ except ModuleNotFoundError:
 NASDAQ100_URL = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 BATCH_SIZE = 50
+BREADTH_MIN_STOCKS = 100
+BREADTH_SMOOTH = 3
 
 
 def _normalise(value: object) -> str | None:
@@ -108,6 +110,78 @@ def _ntss_series(histories: dict[str, pd.DataFrame]) -> pd.Series:
     return (values["vix3m"] - values["vix"]).round(3)
 
 
+def _ema(series: pd.Series, span: int) -> pd.Series:
+    return series.ewm(span=span, adjust=False, min_periods=1).mean()
+
+
+def _daily_to_intraday_ref(daily_ma: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    daily_index = daily_ma.index
+    if getattr(daily_index, "tz", None) is not None:
+        daily_index = daily_index.tz_localize(None)
+    normalised = daily_ma.copy()
+    normalised.index = pd.DatetimeIndex(daily_index).normalize()
+    bar_dates = pd.DatetimeIndex(
+        [pd.Timestamp(ts.tz_localize(None) if ts.tzinfo else ts).normalize() for ts in index]
+    )
+    reference = normalised.reindex(bar_dates, method="ffill")
+    reference.index = index
+    return reference.ffill()
+
+
+def _count_above(prices: pd.DataFrame, reference: pd.DataFrame, min_n: int) -> pd.Series:
+    valid = prices.notna() & reference.notna()
+    counts = ((prices > reference) & valid).sum(axis=1).astype(float)
+    counts[valid.sum(axis=1) < min_n] = np.nan
+    return counts
+
+
+def _pct_above(prices: pd.DataFrame, reference: pd.DataFrame, min_n: int, denominator: int | None) -> pd.Series:
+    valid = prices.notna() & reference.notna()
+    divisor = denominator if denominator and denominator > 0 else valid.sum(axis=1).clip(lower=1)
+    result = ((prices > reference) & valid).sum(axis=1).astype(float) / divisor * 100
+    result[valid.sum(axis=1) < min_n] = np.nan
+    return result
+
+
+def _calculate_breadth(daily: pd.DataFrame, intraday: pd.DataFrame, denominator: int | None = None) -> pd.DataFrame:
+    common = daily.columns.intersection(intraday.columns)
+    references = {
+        window: _daily_to_intraday_ref(daily[common].rolling(window, min_periods=1).mean(), intraday.index)
+        for window in (20, 50, 200)
+    }
+    prices = intraday[common]
+    percentages = {
+        window: _ema(_pct_above(prices, references[window], BREADTH_MIN_STOCKS, denominator), BREADTH_SMOOTH)
+        for window in (20, 50, 200)
+    }
+    all_ma = pd.concat(list(percentages.values()), axis=1)
+    short_ma = pd.concat([percentages[20], percentages[50]], axis=1)
+    return pd.DataFrame({
+        "above_20": percentages[20].round(2),
+        "above_50": percentages[50].round(2),
+        "above_200": percentages[200].round(2),
+        "above_20_n": _count_above(prices, references[20], BREADTH_MIN_STOCKS),
+        "above_50_n": _count_above(prices, references[50], BREADTH_MIN_STOCKS),
+        "above_200_n": _count_above(prices, references[200], BREADTH_MIN_STOCKS),
+        "strong": all_ma.min(axis=1).round(2),
+        "breakdown": (100 - all_ma.max(axis=1)).round(2),
+        "pullback": (short_ma.min(axis=1) - all_ma.min(axis=1)).round(2),
+        "recovery": (all_ma.max(axis=1) - short_ma.max(axis=1)).round(2),
+    }, index=intraday.index)
+
+
+def _calc_momentum(frame: pd.DataFrame) -> pd.Series:
+    return ((frame["strong"].diff() + frame["recovery"].diff()) - (frame["pullback"].diff() + frame["breakdown"].diff())).round(3)
+
+
+def _calc_ntss(vix: pd.DataFrame, index: pd.DatetimeIndex) -> pd.Series:
+    if "vix" not in vix or "vix3m" not in vix:
+        return pd.Series(np.nan, index=index)
+    ntss = (vix["vix3m"].ffill() - vix["vix"].ffill()).round(3)
+    ntss.index = ntss.index.tz_localize("UTC") if ntss.index.tz is None else ntss.index.tz_convert("UTC")
+    return ntss.reindex(index, method="nearest", tolerance=pd.Timedelta("90min"))
+
+
 class SnapshotMarketData:
     def symbols(self, universe: str) -> list[str]:
         if universe == "sp500":
@@ -142,46 +216,21 @@ class SnapshotMarketData:
         symbols = self.symbols("sp500")
         daily = _download_fields(symbols, period="2y", interval="1d", fields=("Close",))
         intraday = _download_fields(symbols, period="5d", interval="15m", fields=("Close",))
-        ntss = _ntss_series(
-            _download_fields(["^VIX", "^VIX3M"], period="5d", interval="15m", fields=("Close",))
-        )
-        series = []
-        for symbol in sorted(set(daily) & set(intraday)):
-            closes = daily[symbol]["Close"].dropna()
-            if closes.empty:
-                continue
-            refs = {window: float(closes.iloc[-window:].mean()) for window in (20, 50, 200)}
-            frame = intraday[symbol]["Close"].rename(symbol).to_frame()
-            for window, reference in refs.items(): frame[f"ma{window}"] = reference
-            series.append(frame)
-        if not series:
+        common = sorted(set(daily) & set(intraday))
+        if not common:
             raise RuntimeError("No valid 15-minute breadth data")
-        index = sorted(set().union(*(frame.index for frame in series)))
+        daily_wide = pd.concat([daily[symbol]["Close"].rename(symbol) for symbol in common], axis=1)
+        intraday_wide = pd.concat([intraday[symbol]["Close"].rename(symbol) for symbol in common], axis=1)
+        breadth = _calculate_breadth(daily_wide, intraday_wide, denominator=len(symbols))
+        breadth["momentum"] = _calc_momentum(breadth)
+        vix_history = _download_fields(["^VIX", "^VIX3M"], period="5d", interval="15m", fields=("Close",))
+        vix = pd.DataFrame()
+        if "^VIX" in vix_history and "^VIX3M" in vix_history:
+            vix = pd.concat([vix_history["^VIX"]["Close"].rename("vix"), vix_history["^VIX3M"]["Close"].rename("vix3m")], axis=1)
+        breadth["ntss"] = _calc_ntss(vix, breadth.index)
         records = []
-        previous = None
-        for timestamp in index:
-            flags = []
-            for frame in series:
-                if timestamp not in frame.index or pd.isna(frame.at[timestamp, frame.columns[0]]): continue
-                close = float(frame.at[timestamp, frame.columns[0]])
-                flags.append(tuple(close > float(frame.at[timestamp, f"ma{window}"]) for window in (20, 50, 200)))
-            if not flags: continue
-            percentages = [100 * sum(flag[i] for flag in flags) / len(symbols) for i in range(3)]
-            strong, breakdown = min(percentages), 100 - max(percentages)
-            pullback = min(percentages[1:]) - strong
-            recovery = max(percentages) - max(percentages[:2])
-            momentum = None
-            if previous is not None:
-                momentum = round(
-                    (strong - previous[0]) + (recovery - previous[3])
-                    - (pullback - previous[2]) - (breakdown - previous[1]),
-                    3,
-                )
-            mid = None
-            if not ntss.empty:
-                nearest = ntss.reindex([timestamp], method="nearest", tolerance=pd.Timedelta("20min"))
-                if not nearest.empty and not pd.isna(nearest.iloc[0]): mid = round(float(nearest.iloc[0]), 3)
-            record = {"t": pd.Timestamp(timestamp).isoformat(), "s": round(strong, 2), "bd": round(breakdown, 2), "pb": round(pullback, 2), "rc": round(recovery, 2), "a20": round(percentages[0], 2), "a50": round(percentages[1], 2), "a200": round(percentages[2], 2), "mom": momentum, "mid": mid, "phase_code": _phase(strong, breakdown)}
+        for timestamp, row in breadth.iterrows():
+            value = lambda key: None if pd.isna(row[key]) else round(float(row[key]), 3)
+            record = {"t": pd.Timestamp(timestamp).isoformat(), "s": value("strong"), "bd": value("breakdown"), "pb": value("pullback"), "rc": value("recovery"), "a20": value("above_20"), "a50": value("above_50"), "a200": value("above_200"), "mom": value("momentum"), "mid": value("ntss"), "phase_code": _phase(value("strong"), value("breakdown"))}
             records.append(record)
-            previous = (strong, breakdown, pullback, recovery)
-        return {"records": records, "n_stocks": len(symbols), "n_valid_15m": len(series), "n_valid_hourly": len(series)}
+        return {"records": records, "n_stocks": len(symbols), "n_valid_15m": len(common), "n_valid_hourly": len(common)}

@@ -12,7 +12,7 @@ from scripts.build_dashboard_snapshots import (
     write_json_atomic,
     run,
 )
-from scripts.market_snapshot_data import _ntss_series
+from scripts.market_snapshot_data import _calculate_breadth, _calc_ntss, _ntss_series
 
 
 def test_ntss_series_is_vix3m_minus_vix():
@@ -23,6 +23,54 @@ def test_ntss_series_is_vix3m_minus_vix():
     }
 
     assert _ntss_series(histories).tolist() == [3.0, 1.5]
+
+
+def test_build_breadth_matches_canonical_available_history_ema_and_date_refs():
+    from live_stock_signal_app import _calculate_breadth as canonical
+
+    symbols = [f"S{i:03}" for i in range(100)]
+    days = pd.date_range("2026-01-01", periods=3, freq="D")
+    daily = pd.DataFrame(
+        [[100.0] * 100, [200.0] * 100, [300.0] * 100], index=days, columns=symbols
+    )
+    bars = pd.DatetimeIndex(
+        ["2026-01-02 15:00:00+00:00", "2026-01-03 15:00:00+00:00"]
+    )
+    intraday = pd.DataFrame(
+        [[140.0] * 100, [250.0] * 100], index=bars, columns=symbols
+    )
+
+    actual = _calculate_breadth(daily, intraday, denominator=100)
+    expected = canonical(daily, intraday, denominator=100)
+
+    pd.testing.assert_frame_equal(actual, expected)
+    assert actual["above_20"].tolist() == [0.0, 50.0]
+
+
+def test_build_breadth_masks_rows_below_minimum_stock_count():
+    daily = pd.DataFrame([[100.0] * 99], columns=[f"S{i}" for i in range(99)])
+    intraday = pd.DataFrame(
+        [[101.0] * 99],
+        index=pd.DatetimeIndex(["2026-01-01 15:00:00+00:00"]),
+        columns=daily.columns,
+    )
+
+    result = _calculate_breadth(daily, intraday, denominator=100)
+
+    assert result[["above_20", "above_50", "above_200"]].isna().all().all()
+    assert result[["above_20_n", "above_50_n", "above_200_n"]].isna().all().all()
+
+
+def test_build_ntss_matches_canonical_90_minute_tolerance():
+    from live_stock_signal_app import _calc_ntss as canonical
+
+    source_index = pd.DatetimeIndex(["2026-01-01 12:00:00+00:00"])
+    vix = pd.DataFrame({"vix": [15.0], "vix3m": [18.0]}, index=source_index)
+    target = pd.DatetimeIndex(
+        ["2026-01-01 13:29:00+00:00", "2026-01-01 13:31:00+00:00"]
+    )
+
+    pd.testing.assert_series_equal(_calc_ntss(vix, target), canonical(vix, target))
 
 
 def test_dashboard_snapshot_merges_universes_and_assigns_weights():
