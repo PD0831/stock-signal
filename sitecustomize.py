@@ -156,9 +156,9 @@ def _install_breadth_patch(app: Any) -> None:
         return payload
 
     def calculate_breadth_from_daily(daily, min_n: int = app.BREADTH_MIN_STOCKS, denominator: int | None = None):
-        ma20_ts = daily.rolling(20, min_periods=20).mean()
-        ma50_ts = daily.rolling(50, min_periods=50).mean()
-        ma200_ts = daily.rolling(200, min_periods=200).mean()
+        ma20_ts = daily.rolling(20, min_periods=1).mean()
+        ma50_ts = daily.rolling(50, min_periods=1).mean()
+        ma200_ts = daily.rolling(200, min_periods=1).mean()
         above_20 = pct_above(daily, ma20_ts, min_n, denominator=denominator)
         above_50 = pct_above(daily, ma50_ts, min_n, denominator=denominator)
         above_200 = pct_above(daily, ma200_ts, min_n, denominator=denominator)
@@ -184,9 +184,9 @@ def _install_breadth_patch(app: Any) -> None:
 
     def calculate_breadth(daily, hourly, denominator: int | None = None):
         common = daily.columns.intersection(hourly.columns)
-        ma20_ts = daily[common].rolling(20, min_periods=20).mean()
-        ma50_ts = daily[common].rolling(50, min_periods=50).mean()
-        ma200_ts = daily[common].rolling(200, min_periods=200).mean()
+        ma20_ts = daily[common].rolling(20, min_periods=1).mean()
+        ma50_ts = daily[common].rolling(50, min_periods=1).mean()
+        ma200_ts = daily[common].rolling(200, min_periods=1).mean()
         ma20_ref = app._daily_to_hourly_ref(ma20_ts, hourly.index)
         ma50_ref = app._daily_to_hourly_ref(ma50_ts, hourly.index)
         ma200_ref = app._daily_to_hourly_ref(ma200_ts, hourly.index)
@@ -279,8 +279,8 @@ def _install_breadth_patch(app: Any) -> None:
                 "a20_n": n(row.get("above_20_n")), "a50_n": n(row.get("above_50_n")), "a200_n": n(row.get("above_200_n")),
                 "valid_20_n": n(row.get("valid_20_n")), "valid_50_n": n(row.get("valid_50_n")), "valid_200_n": n(row.get("valid_200_n"))}
 
-    def daily_close_payload(daily_df, ntss=None, min_n: int = app.BREADTH_MIN_STOCKS, universe_denominator: int | None = None):
-        daily_breadth = calculate_breadth_from_daily(daily_df, min_n=min_n, denominator=universe_denominator)
+    def daily_close_payload(daily_df, ntss=None, min_n: int = app.BREADTH_MIN_STOCKS, denominator: int | None = None):
+        daily_breadth = calculate_breadth_from_daily(daily_df, min_n=min_n, denominator=denominator)
         if ntss is not None and not ntss.empty:
             idx = pd.DatetimeIndex(daily_breadth.index)
             if idx.tz is not None:
@@ -316,7 +316,7 @@ def _install_breadth_patch(app: Any) -> None:
             hourly_df.index = hourly_df.index.tz_localize("UTC")
 
         breadth = calculate_breadth(daily_df, hourly_df, denominator=universe_denominator)
-        daily_close = daily_close_payload(daily_df, app._download_daily_ntss(), universe_denominator=universe_denominator)
+        daily_close = daily_close_payload(daily_df, app._download_daily_ntss(), denominator=universe_denominator)
 
         vix_frames = {}
         for ticker, key in [("^VIX", "vix"), ("^VIX3M", "vix3m")]:
