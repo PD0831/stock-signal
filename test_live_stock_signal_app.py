@@ -4,6 +4,7 @@ import importlib
 import json
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -44,6 +45,12 @@ def test_display_routes_use_snapshots_without_market_dependencies(tmp_path, monk
     monkeypatch.setitem(sys.modules, "pandas", None)
     monkeypatch.setitem(sys.modules, "numpy", None)
     app_module = _import_app(monkeypatch, tmp_path)
+
+    assert {route.path for route in app_module.app.router.routes} == {
+        "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc",
+        "/", "/breadth", "/api/signals", "/api/breadth",
+    }
+    assert type(app_module.app.router.lifespan_context).__name__ == "_DefaultLifespan"
 
     with TestClient(app_module.app) as client:
         assert client.get("/").status_code == 200
@@ -93,3 +100,37 @@ def test_generation_mismatch_makes_both_apis_unavailable(tmp_path, monkeypatch):
         assert response.status_code == 503
         assert response.json()["available"] is False
         assert "generation" in response.json()["error"].lower()
+
+
+def test_invalid_nested_dashboard_fields_are_unavailable(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    path = tmp_path / "dashboard_snapshot.json"
+    payload = json.loads(path.read_text())
+    payload["buy_targets"] = [{"symbol": 123, "universe": "sp500", "rank": 1, "target_weight_pct": 60}]
+    path.write_text(json.dumps(payload))
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    response = TestClient(app_module.app).get("/api/signals")
+
+    assert response.status_code == 503
+    assert "symbol" in response.json()["error"]
+
+
+def test_invalid_breadth_record_is_unavailable(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    path = tmp_path / "breadth_15m.json"
+    payload = json.loads(path.read_text())
+    payload["records"] = [{"t": 123, "s": "high"}]
+    path.write_text(json.dumps(payload))
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    response = TestClient(app_module.app).get("/api/breadth")
+
+    assert response.status_code == 503
+    assert "record" in response.json()["error"]
+
+
+def test_web_module_has_no_live_market_or_network_code():
+    source = (Path(__file__).parent / "live_stock_signal_app.py").read_text()
+    for forbidden in ("yfinance", "requests", "pandas", "numpy", "threading", "socket", "compute_signals", "compute_breadth"):
+        assert forbidden not in source
