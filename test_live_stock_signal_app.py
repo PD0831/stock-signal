@@ -359,7 +359,7 @@ def test_breadth_page_is_lightweight_intraday_radar(tmp_path, monkeypatch):
         "breadthTimestamp", "strongValue", "strongDelta", "breakdownValue",
         "breakdownDelta", "ntssValue", "ntssDelta", "intradayChart",
         "latestTransition", "ma20Value", "ma50Value", "ma200Value",
-        "momentumValue", "qualityDetails",
+        "momentumValue", "qualityDetails", "seriesSummary",
     ):
         assert f'id="{element_id}"' in html
     assert "<details" in html and "研究详情" in html
@@ -367,6 +367,7 @@ def test_breadth_page_is_lightweight_intraday_radar(tmp_path, monkeypatch):
     assert "Plotly" not in html and "plotly" not in html
     assert "innerHTML" not in html
     assert "document.createElementNS" in html
+    assert 'aria-labelledby="chartTitle chartDescription"' in html
     assert 'aria-live="polite"' in html
     assert 'aria-busy="true"' in html
     assert "session_status" in html
@@ -381,7 +382,7 @@ def test_breadth_javascript_renders_deltas_today_transition_and_resets_safely(tm
 const ids=["breadthDashboard","refreshBtn","breadthPhase","phaseBadge","breadthAction",
  "breadthFreshness","breadthTimestamp","strongValue","strongDelta","breakdownValue",
  "breakdownDelta","ntssValue","ntssDelta","intradayChart","chartEmpty","latestTransition",
- "ma20Value","ma50Value","ma200Value","momentumValue","qualityDetails","latestBar"];
+ "ma20Value","ma50Value","ma200Value","momentumValue","qualityDetails","latestBar","seriesSummary"];
 function el(id){return {id,textContent:"",className:"",hidden:false,children:[],attrs:{},style:{},
  addEventListener(){},setAttribute(k,v){this.attrs[k]=v;},appendChild(v){this.children.push(v);},
  replaceChildren(...v){this.children=v;}};}
@@ -406,16 +407,31 @@ if(elements.breakdownDelta.textContent!=="−2.0% vs 15 分钟前") throw new Er
 if(elements.ntssDelta.textContent!=="−0.50 vs 15 分钟前") throw new Error("ntss delta");
 if(elements.latestTransition.textContent.indexOf("B 强势整固 → E 震荡整理")<0) throw new Error("transition");
 if(elements.intradayChart.children.length<4) throw new Error("chart not rendered");
+if(!elements.intradayChart.children.some(x=>x.tag==="title"&&x.textContent.includes("2026-07-11"))) throw new Error("svg title");
+if(!elements.intradayChart.children.some(x=>x.tag==="desc"&&x.textContent.includes("2 个点"))) throw new Error("svg description");
+if(!elements.seriesSummary.textContent.includes("Strong 40.0% → 43.0%")) throw new Error("text summary");
 if(!elements.intradayChart.children.some(x=>x.tag==="text"&&x.textContent==="E 震荡整理")) throw new Error("transition annotation");
 if(elements.intradayChart.children.some(x=>String(x.attrs&&x.attrs.points||"").includes("90"))) throw new Error("prior day leaked");
 if(elements.qualityDetails.textContent.indexOf("有效 498")<0) throw new Error("quality");
 if(elements.breadthDashboard.attrs["aria-busy"]!=="false") throw new Error("busy success");
 setLoading();
 if(elements.strongValue.textContent!=="—"||elements.intradayChart.children.length!==0) throw new Error("loading reset");
+if(elements.chartEmpty.hidden!==false||elements.chartEmpty.textContent!=="正在加载今日轨迹。") throw new Error("loading empty reset");
 if(elements.breadthDashboard.attrs["aria-busy"]!=="true") throw new Error("busy loading");
 setUnavailable("<img onerror=bad>");
+if(elements.chartEmpty.hidden!==false||elements.chartEmpty.textContent!=="轨迹不可用。") throw new Error("error empty reset");
 if(elements.breadthAction.textContent.indexOf("<img onerror=bad>")<0) throw new Error("safe error text");
 if(elements.breadthFreshness.attrs.role!=="alert") throw new Error("alert state");
+renderBreadth({...data,records:[data.records[2]],latest_transition:null});
+if(elements.chartEmpty.hidden!==true) throw new Error("one point chart state");
+setLoading();if(elements.chartEmpty.hidden!==false||elements.seriesSummary.textContent!=="正在加载今日轨迹。") throw new Error("one point loading reset");
+setUnavailable("boom");if(elements.chartEmpty.hidden!==false||elements.seriesSummary.textContent!=="轨迹不可用。") throw new Error("one point error reset");
+const normalized=normalizeRecords([
+ {t:"2026-07-11T15:00:00Z",s:3},{t:"bad",s:9},{t:"2026-07-11T14:30:00Z",s:1},
+ {t:"2026-07-11T15:00:00Z",s:4},{t:"2026-07-11T14:45:00Z",s:2}]);
+if(normalized.length!==3||normalized.map(r=>r.s).join("")!=="124") throw new Error("normalize order/dedupe");
+const gap=metric(4,1,1,"%",30);if(gap[1]!=="+3.0% vs 30 分钟前") throw new Error("30m gap");
+if(metric(4,1,1,"%",0)[1]!=="—") throw new Error("invalid elapsed");
 '''
     result = subprocess.run(["node", "-e", harness + script + assertions], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
