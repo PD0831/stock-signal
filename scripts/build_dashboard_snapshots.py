@@ -20,6 +20,7 @@ def _timestamp(value: datetime) -> str:
 
 def build_dashboard_snapshot(
     picks: Mapping[str, Iterable[Mapping[str, Any]]],
+    *,
     generated_at: datetime,
     market_status: Any = None,
     quality: Any = None,
@@ -51,6 +52,7 @@ def _phase(record: Mapping[str, Any]) -> Any:
 
 def build_breadth_snapshot(
     records: Iterable[Mapping[str, Any]],
+    *,
     generated_at: datetime | None = None,
     quality: Any = None,
 ) -> dict[str, Any]:

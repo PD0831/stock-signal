@@ -21,7 +21,7 @@ def test_dashboard_snapshot_merges_universes_and_assigns_weights():
 
     snapshot = build_dashboard_snapshot(
         picks,
-        generated_at,
+        generated_at=generated_at,
         market_status={"phase": "B"},
         quality={"fresh": True},
     )
@@ -52,7 +52,9 @@ def test_breadth_snapshot_reports_last_phase_change():
     ]
     generated_at = datetime.fromisoformat("2026-07-11T10:20:00+02:00")
 
-    snapshot = build_breadth_snapshot(records, generated_at, quality={"valid": 98})
+    snapshot = build_breadth_snapshot(
+        records, generated_at=generated_at, quality={"valid": 98}
+    )
 
     assert snapshot == {
         "schema_version": 1,
@@ -83,6 +85,15 @@ def test_breadth_snapshot_defaults_generated_at_and_has_no_transition(monkeypatc
     assert snapshot["generated_at"] == "2026-07-11T08:00:00+00:00"
     assert snapshot["quality"] is None
     assert snapshot["latest_transition"] is None
+
+
+def test_generated_at_is_keyword_only_for_both_builders():
+    generated_at = datetime(2026, 7, 11, tzinfo=timezone.utc)
+
+    with pytest.raises(TypeError):
+        build_dashboard_snapshot({}, generated_at)
+    with pytest.raises(TypeError):
+        build_breadth_snapshot([], generated_at)
 
 
 def test_write_json_atomic_creates_parent_and_replaces_file(tmp_path):
