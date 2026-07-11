@@ -243,415 +243,83 @@ SIGNALS_HTML = r"""<!doctype html>
 """
 
 # ── HTML: breadth page ────────────────────────────────────────────────────────
-BREADTH_HTML = r"""<!DOCTYPE html>
-<html lang="en">
+BREADTH_HTML = r"""<!doctype html>
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Market Vital Sign — Breadth Monitor</title>
-  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Market Vital Sign · 15 分钟盘中雷达</title>
   <style>
-    *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
-    body { background:#0d1117; color:#e6edf3;
-           font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-           font-size:13px; min-height:100vh; }
-    header { background:#161b22; border-bottom:1px solid #30363d;
-             padding:10px 20px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-    header h1 { font-size:15px; font-weight:600; color:#58a6ff; }
-    .header-meta { font-size:11px; color:#8b949e; margin-left:auto; }
-    #refreshBtn { background:#21262d; border:1px solid #30363d; color:#c9d1d9;
-                  border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer; }
-    #refreshBtn:hover { background:#30363d; }
-    .status-bar { display:flex; gap:10px; padding:10px 16px; background:#161b22;
-                  border-bottom:1px solid #30363d; flex-wrap:wrap; align-items:center; }
-    .card { background:#21262d; border:1px solid #30363d; border-radius:8px;
-            padding:7px 14px; min-width:105px; text-align:center; }
-    .card .lbl { font-size:10px; color:#8b949e; margin-bottom:2px;
-                 text-transform:uppercase; letter-spacing:.4px; }
-    .card .val { font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; }
-    .card .dlt { font-size:10px; margin-top:2px; }
-    .green{color:#3fb950} .red{color:#f85149} .yellow{color:#d29922}
-    .blue{color:#58a6ff}  .gray{color:#8b949e}
-    .badge { border-radius:20px; padding:3px 12px; font-size:12px; font-weight:600;
-             letter-spacing:.4px; white-space:nowrap; }
-    .safe    { background:#1a3a1a; color:#3fb950; border:1px solid #3fb950; }
-    .caution { background:#2d2200; color:#d29922; border:1px solid #d29922; }
-    .panic   { background:#3a1a1a; color:#f85149; border:1px solid #f85149; }
-    .allow   { background:#1a3a1a; color:#3fb950; border:1px solid #3fb950; }
-    .wait    { background:#21262d; color:#8b949e; border:1px solid #30363d; }
-    .controls { display:flex; gap:8px; padding:8px 16px; border-bottom:1px solid #21262d;
-                align-items:center; flex-wrap:wrap; }
-    .lbl-sm { color:#8b949e; font-size:11px; }
-    .btn-grp { display:flex; gap:3px; }
-    .btn { background:#21262d; border:1px solid #30363d; color:#c9d1d9;
-           border-radius:5px; padding:4px 10px; font-size:11px; cursor:pointer; }
-    .btn:hover { background:#30363d; }
-    .btn.active { background:#1f6feb; border-color:#388bfd; color:#fff; }
-    #chartWrap { padding:4px 8px 12px; }
-    #loadMsg { display:flex; flex-direction:column; align-items:center;
-               justify-content:center; min-height:60vh; gap:16px;
-               color:#8b949e; text-align:center; }
-    #loadMsg h2 { color:#58a6ff; }
-    .spinner { width:40px; height:40px; border:3px solid #30363d;
-               border-top-color:#58a6ff; border-radius:50%;
-               animation:spin 0.8s linear infinite; }
-    @keyframes spin { to { transform:rotate(360deg); } }
+    :root{color-scheme:dark;--bg:#090d13;--panel:#111821;--line:#263140;--muted:#8b98a9;
+      --text:#eef3f8;--blue:#5ba7ff;--green:#41d17d;--red:#ff6574;--amber:#f5c451}
+    *,*::before,*::after{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);
+      color:var(--text);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px max(16px,calc((100vw - 1180px)/2));
+      border-bottom:1px solid var(--line);background:#0d131b}h1,h2,p{margin:0}h1{font-size:18px}.eyebrow,.label{
+      color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+    .eyebrow{color:var(--blue)}button{border:1px solid #354458;background:#172130;color:var(--text);border-radius:7px;
+      padding:7px 12px;font-weight:700;cursor:pointer}button:disabled{opacity:.55;cursor:wait}
+    main{width:min(1180px,calc(100% - 28px));margin:20px auto 45px;display:grid;gap:15px}
+    .hero,.metric,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#131c27,#0e151e);border-radius:12px}
+    .hero{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,.7fr);overflow:hidden}.hero-main{padding:22px;border-left:4px solid var(--blue)}
+    #breadthAction{font-size:clamp(22px,3.7vw,38px);margin:7px 0}.hero-side{padding:19px;border-left:1px solid var(--line);display:grid;gap:13px}
+    .row{display:flex;justify-content:space-between;align-items:center;gap:12px}.badge{display:inline-flex;border:1px solid #43536a;
+      border-radius:999px;padding:4px 9px;font-size:11px;font-weight:800}.fresh{color:var(--green);border-color:#267a4c;background:#10291d}
+    .stale{color:var(--amber);border-color:#926f19;background:#2a210c}.unavailable{color:var(--red);border-color:#963b48;background:#2a1218}
+    #breadthPhase{font-size:22px;font-weight:850}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.metric{padding:17px}.value{font-size:30px;
+      font-weight:850;font-variant-numeric:tabular-nums;margin-top:7px}.delta{font-size:11px;color:var(--muted);margin-top:5px}.positive{color:var(--green)}.negative{color:var(--red)}
+    .panel{padding:18px}.panel-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:13px}.sub{font-size:11px;color:var(--muted)}
+    #intradayChart{width:100%;height:auto;min-height:230px;background:#0b1119;border-radius:8px;border:1px solid #202a37}.legend{display:flex;gap:15px;color:var(--muted);font-size:11px}
+    .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.transition{border-left:3px solid var(--amber);padding:12px 14px;background:#141b24;border-radius:6px}
+    details{border:1px solid var(--line);border-radius:10px;background:#0e151e}summary{cursor:pointer;padding:15px 17px;font-weight:800}.research{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line)}
+    .research>div{background:#111821;padding:15px}.research .value{font-size:22px}#qualityDetails{padding:14px 17px;color:var(--muted);border-top:1px solid var(--line)}
+    @media(max-width:720px){header{align-items:flex-start}.hero{grid-template-columns:1fr}.hero-side{border-left:0;border-top:1px solid var(--line)}.metrics{grid-template-columns:1fr}.research{grid-template-columns:1fr 1fr}.panel{padding:12px}}
   </style>
-</head>
-<body>
-<header>
-  <h1>Market Vital Sign — Breadth Monitor</h1>
-  <span style="font-size:11px;color:#8b949e">S&amp;P 500 · Hourly · yfinance</span>
-  <div class="header-meta">
-    Generated: <span id="genTime">—</span> &nbsp;|&nbsp; <span id="nStocks">—</span> stocks
-    &nbsp;&nbsp;
-    <button id="refreshBtn" onclick="location.reload()">⟳ Refresh</button>
-    <span id="autoReload" style="font-size:11px;color:#484f58;margin-left:8px"></span>
-  </div>
-</header>
+</head><body>
+<header><div><div class="eyebrow">Intraday Radar</div><h1>15 分钟市场宽度</h1></div><button id="refreshBtn" type="button">刷新快照</button></header>
 """ + _NAV + r"""
-<div class="status-bar" id="statusBar" style="display:none">
-  <div class="card">
-    <div class="lbl">Strong</div>
-    <div class="val green" id="vS">—</div>
-    <div class="dlt gray"  id="dS">—</div>
-  </div>
-  <div class="card">
-    <div class="lbl">Breakdown</div>
-    <div class="val" id="vBD">—</div>
-    <div class="dlt gray" id="dBD">—</div>
-  </div>
-  <div class="card">
-    <div class="lbl">NTSS</div>
-    <div class="val blue" id="vMid">—</div>
-    <div class="dlt gray" id="dMid">—</div>
-  </div>
-  <div class="card">
-    <div class="lbl">Net Momentum</div>
-    <div class="val" id="vMom">—</div>
-    <div class="dlt gray" id="dMom">—</div>
-  </div>
-  <div style="margin-left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-    <span class="lbl-sm">Phase</span>
-    <span class="badge" id="phaseTag">—</span>
-    <span class="lbl-sm" style="margin-left:4px">NTSS</span>
-    <span class="badge" id="stateTag">—</span>
-    <span class="badge" id="stageTag" style="display:none">—</span>
-    <span class="lbl-sm" style="margin-left:4px">BL=35</span>
-    <span class="badge" id="trigTag">—</span>
-    <span style="font-size:10px;color:#484f58;margin-left:8px" id="lastBar">—</span>
-  </div>
-</div>
-
-<div class="controls" id="ctrlBar" style="display:none">
-  <span class="lbl-sm">Show last:</span>
-  <div class="btn-grp" id="rangeGrp">
-    <button class="btn" onclick="setRange(5)">5D</button>
-    <button class="btn active" onclick="setRange(10)">10D</button>
-    <button class="btn" onclick="setRange(20)">20D</button>
-    <button class="btn" onclick="setRange(30)">30D</button>
-    <button class="btn" onclick="setRange(0)">All</button>
-  </div>
-</div>
-
-<div id="loadMsg">
-  <div class="spinner"></div>
-  <h2>Loading breadth data…</h2>
-  <p id="loadDetail">Fetching from server…</p>
-</div>
-
-<div id="chartWrap" style="display:none">
-  <div id="chartDiv"></div>
-</div>
-
+<main id="breadthDashboard" aria-busy="true">
+  <section class="hero"><div class="hero-main" role="status" aria-live="polite"><div class="label">当前行动</div><h2 id="breadthAction">正在加载</h2><p class="sub" id="latestBar">正在读取预计算快照。</p></div>
+    <div class="hero-side"><div><div class="label">当前阶段</div><div class="row"><span id="breadthPhase">—</span><span class="badge" id="phaseBadge">等待</span></div></div>
+      <div class="row"><span class="label">快照状态</span><span class="badge" id="breadthFreshness" role="status" aria-live="polite">加载中</span></div>
+      <div class="sub" id="breadthTimestamp">数据时间 —</div></div></section>
+  <section class="metrics" aria-label="盘中核心指标">
+    <article class="metric"><div class="label">Strong</div><div class="value positive" id="strongValue">—</div><div class="delta" id="strongDelta">—</div></article>
+    <article class="metric"><div class="label">Breakdown</div><div class="value negative" id="breakdownValue">—</div><div class="delta" id="breakdownDelta">—</div></article>
+    <article class="metric"><div class="label">NTSS</div><div class="value" id="ntssValue">—</div><div class="delta" id="ntssDelta">—</div></article>
+  </section>
+  <section class="panel"><div class="panel-head"><div><h2>今日轨迹</h2><div class="sub">仅绘制当前交易日的 15 分钟聚合记录</div></div><div class="legend"><span><i class="dot" style="background:var(--green)"></i>Strong</span><span><i class="dot" style="background:var(--red)"></i>Breakdown</span></div></div>
+    <svg id="intradayChart" viewBox="0 0 900 260" role="img" aria-label="今日 Strong 与 Breakdown 轨迹"></svg><p id="chartEmpty" class="sub" hidden>当前交易日暂无足够记录。</p></section>
+  <section class="transition"><div class="label">最近阶段切换</div><strong id="latestTransition">暂无阶段切换记录</strong></section>
+  <details><summary>研究详情</summary><div class="research">
+    <div><div class="label">MA20 宽度</div><div class="value" id="ma20Value">—</div></div><div><div class="label">MA50 宽度</div><div class="value" id="ma50Value">—</div></div>
+    <div><div class="label">MA200 宽度</div><div class="value" id="ma200Value">—</div></div><div><div class="label">Momentum</div><div class="value" id="momentumValue">—</div></div></div>
+    <p id="qualityDetails">正在检查覆盖率和有效成分股数。</p></details>
+</main>
 <script>
-let DATA         = null;
-let currentRange = 10;
-
-const C = {
-  strong:"#3fb950", breakdown:"#f85149",
-  midPos:"#58a6ff", midNeg:"#f85149",
-  momPos:"#3fb950", momNeg:"#f85149",
-  ref:"rgba(139,148,158,0.35)", text:"#8b949e",
-};
-
-// ── Fetch with retry on 202 ───────────────────────────────────────────────────
-async function loadData() {
-  for (let attempt = 0; attempt < 60; attempt++) {
-    try {
-      const res = await fetch("/api/breadth");
-      if (res.status === 202) {
-        const j = await res.json();
-        const detail = document.getElementById("loadDetail");
-        if (j.status === "error") {
-          detail.textContent = "Error: " + (j.error || j.message);
-          detail.style.color = "#f85149";
-        } else {
-          detail.textContent = (j.message || "Computing…");
-          detail.style.color = "";
-        }
-        await new Promise(r => setTimeout(r, 15000));
-        continue;
-      }
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      DATA = await res.json();
-      onDataReady();
-      return;
-    } catch(e) {
-      document.getElementById("loadDetail").textContent = "Network error: " + e.message + " — retrying…";
-      await new Promise(r => setTimeout(r, 15000));
-    }
-  }
-  document.getElementById("loadDetail").textContent = "Timed out. Please refresh the page.";
+const P1=new Intl.NumberFormat("zh-CN",{minimumFractionDigits:1,maximumFractionDigits:1});
+const P2=new Intl.NumberFormat("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2});
+function finite(v){return typeof v==="number"&&Number.isFinite(v)}
+function text(id,v){document.getElementById(id).textContent=String(v)}
+function busy(v){document.getElementById("breadthDashboard").setAttribute("aria-busy",v?"true":"false")}
+function resetValues(){["strongValue","strongDelta","breakdownValue","breakdownDelta","ntssValue","ntssDelta","ma20Value","ma50Value","ma200Value","momentumValue"].forEach(id=>text(id,"—"));document.getElementById("intradayChart").replaceChildren()}
+function setLoading(){resetValues();text("breadthAction","正在加载");text("latestBar","正在读取预计算快照。");text("breadthPhase","—");text("phaseBadge","等待");text("breadthTimestamp","数据时间 —");text("latestTransition","暂无阶段切换记录");text("qualityDetails","正在检查覆盖率和有效成分股数。");const b=document.getElementById("breadthFreshness");b.className="badge";b.textContent="加载中";b.setAttribute("role","status");busy(true)}
+function setUnavailable(message){resetValues();text("breadthAction","暂缓判断："+message);text("latestBar","等待下一次成功发布。");text("breadthPhase","—");text("phaseBadge","未知");text("breadthTimestamp","数据时间 —");text("latestTransition","无可用阶段切换");text("qualityDetails","快照不可用，研究指标已清空。");const b=document.getElementById("breadthFreshness");b.className="badge unavailable";b.textContent="不可用";b.setAttribute("role","alert");busy(false)}
+function phaseMeta(record){const code=String(record.phase_code||record.phase||"—");return {code,label:record.phase_label||record.phase_name||code,action:record.action||record.action_label||"依据最新预计算阶段保持纪律，等待明确信号。"}}
+function metric(value,previous,digits,suffix){const val=finite(value)?(digits===2?P2:P1).format(value)+(suffix||""):"—";let delta="—";if(finite(value)&&finite(previous)){const d=value-previous;delta=(d>0?"+":d<0?"−":"")+(digits===2?P2:P1).format(Math.abs(d))+(suffix||"")+" vs 15 分钟前"}return [val,delta]}
+function dayKey(t){const s=String(t||"");return s.includes("T")?s.split("T")[0]:s.split(" ")[0]}
+function svg(tag,attrs){const node=document.createElementNS("http://www.w3.org/2000/svg",tag);Object.entries(attrs||{}).forEach(([k,v])=>node.setAttribute(k,String(v)));return node}
+function intradayRecords(records){if(!records.length)return [];const latestDay=dayKey(records[records.length-1].t);return records.filter(r=>dayKey(r.t)===latestDay)}
+function renderChart(records,transition){const chart=document.getElementById("intradayChart"),empty=document.getElementById("chartEmpty");chart.replaceChildren();const recs=intradayRecords(records);empty.hidden=recs.length>1;if(recs.length<1)return;const left=45,right=875,top=18,bottom=225,x=i=>recs.length===1?(left+right)/2:left+(right-left)*i/(recs.length-1),y=v=>bottom-(bottom-top)*Math.max(0,Math.min(100,finite(v)?v:0))/100;
+  [0,25,50,75,100].forEach(v=>{chart.appendChild(svg("line",{x1:left,y1:y(v),x2:right,y2:y(v),stroke:"#263140"}));const l=svg("text",{x:8,y:y(v)+4,fill:"#8b98a9","font-size":10});l.textContent=v+"%";chart.appendChild(l)});
+  [["s","#41d17d"],["bd","#ff6574"]].forEach(([key,color])=>{const points=recs.map((r,i)=>x(i)+","+y(r[key])).join(" ");chart.appendChild(svg("polyline",{points,fill:"none",stroke:color,"stroke-width":3,"stroke-linejoin":"round"}));const last=recs.length-1;chart.appendChild(svg("circle",{cx:x(last),cy:y(recs[last][key]),r:4,fill:color}))});
+  if(transition){const i=recs.findIndex(r=>String(r.t)===String(transition.at));if(i>=0){chart.appendChild(svg("line",{x1:x(i),y1:top,x2:x(i),y2:bottom,stroke:"#f5c451","stroke-dasharray":"4 4"}))}}
 }
-
-function onDataReady() {
-  document.getElementById("loadMsg").style.display   = "none";
-  document.getElementById("chartWrap").style.display = "block";
-  document.getElementById("statusBar").style.display = "flex";
-  document.getElementById("ctrlBar").style.display   = "flex";
-  document.getElementById("genTime").textContent = DATA.generated_at.replace("T"," ");
-  document.getElementById("nStocks").textContent = DATA.n_stocks;
-  updateStatus();
-  render(currentRange);
-  startAutoReload();
-}
-
-// ── Status cards ──────────────────────────────────────────────────────────────
-function updateStatus() {
-  const recs = DATA.records;
-  const n    = recs.length - 1;
-  if (n < 1) return;
-  const daily = DATA.daily_close || {};
-  const usingDaily = !!daily.current;
-  const cur  = usingDaily ? daily.current : recs[n];
-  const prev = usingDaily ? daily.previous : (DATA.previous_day_close || recs[n-1]);
-  const deltaLabel = usingDaily ? " vs prior daily close" : (DATA.previous_day_close ? " vs prior day close" : " vs prev");
-  const fmt  = (v, d) => v != null ? v.toFixed(d==null?1:d) : "—";
-  const sgn  = v => v > 0 ? "+" : "";
-
-  function card(valId, dltId, cv, pv, sfx, posGood) {
-    const el = document.getElementById(valId);
-    const dl = document.getElementById(dltId);
-    const d  = (cv != null && pv != null) ? cv - pv : null;
-    el.textContent = fmt(cv) + (sfx||"");
-    if      (valId==="vS")   el.className = "val " + (cv >= 35 ? "green" : "red");
-    else if (valId==="vBD")  el.className = "val " + (cv >= 50 ? "red" : cv >= 35 ? "yellow" : "green");
-    else if (valId==="vMid") el.className = "val " + (cv==null?"gray": cv<0?"red": cv<2?"yellow":"blue");
-    else if (valId==="vMom") el.className = "val " + (cv==null?"gray": cv>=0?"green":"red");
-    dl.textContent = d!=null ? sgn(d)+fmt(d,2)+(sfx||"")+deltaLabel : "—";
-    dl.className   = d!=null ? "dlt "+(posGood?(d>=0?"green":"red"):(d<=0?"green":"red")) : "dlt gray";
-  }
-  card("vS",  "dS",  cur.s,  prev.s,  "%", true);
-  card("vBD", "dBD", cur.bd, prev.bd, "%", false);
-  card("vMid","dMid",cur.mid,prev.mid,"",  true);
-  card("vMom","dMom",cur.mom,prev.mom,"",  true);
-
-  const st = document.getElementById("stateTag");
-  if (cur.mid!=null) {
-    if      (cur.mid<0) { st.textContent="PANIC";   st.className="badge panic"; }
-    else if (cur.mid<2) { st.textContent="CAUTION"; st.className="badge caution"; }
-    else                { st.textContent="SAFE";    st.className="badge safe"; }
-  }
-  const tr = document.getElementById("trigTag");
-  const ok = cur.bd!=null && cur.bd<35;
-  tr.textContent = ok ? "BL=35 ✓ ALLOW" : "BL=35 ✗ WAIT";
-  tr.className   = "badge " + (ok ? "allow" : "wait");
-
-  const lastBar = document.getElementById("lastBar");
-  if (lastBar) {
-    lastBar.textContent = usingDaily ? "Daily close: " + cur.t : "Last: " + cur.t + " ET";
-  }
-
-  // ── Market phase (Strong × BD) ───────────────────────────────────────────
-  const ph = document.getElementById("phaseTag");
-  if (ph && cur.s!=null && cur.bd!=null) {
-    const s = cur.s, bd = cur.bd, mid = cur.mid;
-    let phase, cls;
-    if      (s>55 && bd<20)  { phase="A 全面牛市"; cls="safe"; }
-    else if (s>40 && bd<30)  { phase="B 强势整固"; cls="safe"; }
-    else if (s>35 && bd<45)  { phase="C 牛市回调"; cls="safe"; }
-    else if (s>25 && bd<35)  { phase="D 修复中";   cls="safe"; }
-    else if (s>20 && bd<50)  { phase="E 震荡整理"; cls="caution"; }
-    else if (s<20 && bd<40)  { phase="F 弱势未崩"; cls="caution"; }
-    else if (s<30 && bd>50)  { phase="G 宽度承压"; cls="panic"; }
-    else                     { phase="H 恐慌出清"; cls="panic"; }
-    ph.textContent = phase;
-    ph.className   = "badge " + cls;
-  }
-
-  // ── NTSS recovery stage (only shown when in panic/bear phase) ────────────
-  const sg = document.getElementById("stageTag");
-  if (sg && cur.mid!=null) {
-    const m = cur.mid, s = cur.s, bd = cur.bd;
-    const inPanic = s < 20 && bd > 55;
-    if (inPanic) {
-      let stage, scls;
-      if      (m < -3) { stage="① 极端恐慌";  scls="panic"; }
-      else if (m < -1) { stage="② 恐慌中";    scls="panic"; }
-      else if (m <  0) { stage="③ 临近0轴";   scls="caution"; }
-      else if (m <  1) { stage="④ 刚穿零";    scls="caution"; }
-      else if (m <  2) { stage="⑤ 弱确认";    scls="caution"; }
-      else             { stage="⑥ 强确认 ★";  scls="safe"; }
-      sg.textContent = stage;
-      sg.className   = "badge " + scls;
-      sg.style.display = "";
-    } else {
-      sg.style.display = "none";
-    }
-  }
-}
-
-// ── Data slice ────────────────────────────────────────────────────────────────
-function sliceRecords(days) {
-  const all = DATA.records;
-  if (days === 0) return all;
-  const dates = [...new Set(all.map(r => r.t.split(" ")[0]))].sort();
-  const from  = days >= dates.length ? dates[0] : dates[dates.length - days];
-  return all.filter(r => r.t.split(" ")[0] >= from);
-}
-
-// ── Buy period shapes ─────────────────────────────────────────────────────────
-function buyPeriodShapes(recs) {
-  const shapes = [];
-  for (const pair of [[50,"rgba(63,185,80,0.07)"],[35,"rgba(63,185,80,0.18)"]]) {
-    const limit = pair[0], color = pair[1];
-    let start = null;
-    for (let i = 0; i < recs.length; i++) {
-      const active = recs[i].bd != null && recs[i].bd < limit;
-      if (active && start === null) { start = recs[i].t; }
-      else if (!active && start !== null) {
-        shapes.push({type:"rect",xref:"x",yref:"paper",
-          x0:start,x1:recs[i-1].t,y0:0,y1:1,
-          fillcolor:color,line:{width:0},layer:"below"});
-        start = null;
-      }
-    }
-    if (start !== null)
-      shapes.push({type:"rect",xref:"x",yref:"paper",
-        x0:start,x1:recs[recs.length-1].t,y0:0,y1:1,
-        fillcolor:color,line:{width:0},layer:"below"});
-  }
-  return shapes;
-}
-
-// ── Traces ────────────────────────────────────────────────────────────────────
-function makeTraces(recs) {
-  const T    = recs.map(r => r.t);
-  const S    = recs.map(r => r.s);
-  const BD   = recs.map(r => r.bd);
-  const MID  = recs.map(r => r.mid);
-  const MOM  = recs.map(r => r.mom);
-  const A20  = recs.map(r => r.a20);
-  const A50  = recs.map(r => r.a50);
-  const A200 = recs.map(r => r.a200);
-  const midColors = MID.map(v => v!=null && v<0 ? C.midNeg : C.midPos);
-  const momColors = MOM.map(v => v!=null && v<0 ? C.momNeg : C.momPos);
-  return [
-    {x:T,y:S,  name:"Strong",      xaxis:"x",yaxis:"y",  type:"scatter",mode:"lines",
-     line:{color:C.strong,width:2},fill:"tozeroy",fillcolor:"rgba(63,185,80,0.10)",
-     hovertemplate:"<b>Strong</b>: %{y:.1f}%<extra></extra>"},
-    {x:T,y:BD, name:"Breakdown",   xaxis:"x",yaxis:"y",  type:"scatter",mode:"lines",
-     line:{color:C.breakdown,width:2,dash:"dot"},fill:"tozeroy",fillcolor:"rgba(248,81,73,0.08)",
-     hovertemplate:"<b>Breakdown</b>: %{y:.1f}%<extra></extra>"},
-    {x:T,y:A20,name:">20d MA",     xaxis:"x",yaxis:"y2", type:"scatter",mode:"lines",
-     line:{color:"#f0a500",width:1.5},hovertemplate:"<b>>20d</b>: %{y:.1f}%<extra></extra>"},
-    {x:T,y:A50,name:">50d MA",     xaxis:"x",yaxis:"y2", type:"scatter",mode:"lines",
-     line:{color:"#58a6ff",width:1.5},hovertemplate:"<b>>50d</b>: %{y:.1f}%<extra></extra>"},
-    {x:T,y:A200,name:">200d MA",   xaxis:"x",yaxis:"y2", type:"scatter",mode:"lines",
-     line:{color:"#3fb950",width:1.5},hovertemplate:"<b>>200d</b>: %{y:.1f}%<extra></extra>"},
-    {x:T,y:MID,name:"NTSS", xaxis:"x",yaxis:"y3", type:"bar",marker:{color:midColors},
-     hovertemplate:"<b>3M-30D</b>: %{y:.2f}<extra></extra>"},
-    {x:T,y:MOM,name:"Momentum",    xaxis:"x",yaxis:"y4", type:"bar",marker:{color:momColors},
-     hovertemplate:"<b>Mom</b>: %{y:.2f}<extra></extra>"},
-  ];
-}
-
-// ── Layout ────────────────────────────────────────────────────────────────────
-function makeLayout(recs) {
-  const grid = "#21262d";
-  const rl   = (yr, y0) => ({type:"line",xref:"paper",yref:yr,x0:0,x1:1,y0,y1:y0,
-                               line:{color:C.ref,width:1,dash:"dot"}});
-  const shapes = [
-    ...buyPeriodShapes(recs),
-    rl("y",35),rl("y",50),rl("y2",35),rl("y2",50),
-    rl("y3",2),rl("y3",1),
-    {type:"line",xref:"paper",yref:"y3",x0:0,x1:1,y0:-1,y1:-1,line:{color:"rgba(248,81,73,0.35)",width:1,dash:"dot"}},
-    {type:"line",xref:"paper",yref:"y3",x0:0,x1:1,y0:-3,y1:-3,line:{color:"rgba(248,81,73,0.6)",width:1,dash:"dot"}},
-    {type:"line",xref:"paper",yref:"y3",x0:0,x1:1,y0:0,y1:0,line:{color:"rgba(139,148,158,0.6)",width:1.5}},
-    rl("y4",5),rl("y4",-5),
-    {type:"line",xref:"paper",yref:"y4",x0:0,x1:1,y0:0,y1:0,line:{color:"rgba(139,148,158,0.6)",width:1.5}},
-  ];
-  const lbl  = (yr, txt) => ({xref:"paper",yref:yr,x:0.01,y:1,text:"<b>"+txt+"</b>",
-                               showarrow:false,font:{color:"#c9d1d9",size:10},
-                               xanchor:"left",yanchor:"top"});
-  const rlbl = (yr, y, txt) => ({xref:"paper",yref:yr,x:1.002,y,text:txt,
-                                  showarrow:false,font:{color:C.ref,size:9},xanchor:"left"});
-  return {
-    paper_bgcolor:"#0d1117", plot_bgcolor:"#0d1117",
-    font:{color:C.text,size:11},
-    margin:{l:52,r:36,t:12,b:36},
-    height:Math.max(window.innerHeight-230,480),
-    showlegend:true,
-    legend:{orientation:"h",x:0,y:-0.04,font:{size:10},bgcolor:"rgba(0,0,0,0)"},
-    hovermode:"x unified",
-    xaxis:{domain:[0,1],type:"date",gridcolor:grid,linecolor:grid,tickfont:{size:10},showgrid:true,
-           rangebreaks:[{bounds:["sat","mon"]},{bounds:[17,9],pattern:"hour"}]},
-    yaxis: {domain:[0.77,1.00],range:[0,105],gridcolor:grid,ticksuffix:"%",zeroline:false},
-    yaxis2:{domain:[0.52,0.75],range:[0,105],gridcolor:grid,ticksuffix:"%",zeroline:false},
-    yaxis3:{domain:[0.27,0.50],gridcolor:grid,zeroline:false},
-    yaxis4:{domain:[0.00,0.24],gridcolor:grid,zeroline:false},
-    shapes,
-    annotations:[
-      lbl("y",  "Strong / Breakdown %"),
-      lbl("y2", "% above 20d / 50d / 200d daily MA"),
-      lbl("y3", "NTSS  [VIX3M−VIX]"),
-      lbl("y4", "Net Momentum"),
-      rlbl("y",35,"35"),rlbl("y",50,"50"),
-      rlbl("y2",35,"35"),rlbl("y2",50,"50"),
-      rlbl("y3",2," 2"),rlbl("y3",1," 1"),rlbl("y3",0," 0"),
-      rlbl("y3",-1,"-1"),rlbl("y3",-3,"-3"),
-      rlbl("y4",5,"+5"),rlbl("y4",-5,"-5"),
-    ],
-  };
-}
-
-// ── Render ────────────────────────────────────────────────────────────────────
-function render(days) {
-  currentRange = days;
-  const recs = sliceRecords(days);
-  Plotly.react("chartDiv", makeTraces(recs), makeLayout(recs), {
-    responsive:true, displayModeBar:true, displaylogo:false,
-    modeBarButtonsToRemove:["select2d","lasso2d","autoScale2d"],
-  });
-}
-
-function setRange(days) {
-  document.querySelectorAll("#rangeGrp .btn").forEach((b,i) => {
-    b.classList.toggle("active", [5,10,20,30,0][i] === days);
-  });
-  if (DATA) render(days);
-}
-
-window.addEventListener("resize", () => {
-  if (DATA) Plotly.relayout("chartDiv", {height:Math.max(window.innerHeight-230,480)});
-});
-
-// ── Auto-reload countdown ─────────────────────────────────────────────────────
-function startAutoReload() {
-  let rem = 60 * 60 * 1000;
-  const el = document.getElementById("autoReload");
-  const tick = setInterval(() => {
-    rem -= 1000;
-    if (rem <= 0) { clearInterval(tick); location.reload(); return; }
-    const m = Math.floor(rem/60000);
-    const s = Math.floor((rem%60000)/1000);
-    if (el) el.textContent = "auto-reload in " + m + ":" + String(s).padStart(2,"0");
-  }, 1000);
-}
-
-loadData();
-</script>
-</body>
-</html>
+function qualityText(data,cur){const q=data.quality||{},parts=[];if(finite(q.valid_count))parts.push("有效 "+q.valid_count);if(finite(q.failed_count))parts.push("失败 "+q.failed_count);[["MA20","a20_n", "valid_20_n"],["MA50","a50_n","valid_50_n"],["MA200","a200_n","valid_200_n"]].forEach(([name,a,b])=>{const n=finite(cur[a])?cur[a]:cur[b];if(finite(n))parts.push(name+" 有效 "+n)});if(q.session_status)parts.push(q.session_status==="open"?"交易时段":"市场已收盘");if(data.stale)parts.push("继续展示上次成功快照");return parts.length?parts.join(" · "):"覆盖率未提供。"}
+function renderBreadth(data){const all=Array.isArray(data.records)?data.records:[],recs=intradayRecords(all);if(!recs.length){setUnavailable("当前交易日暂无记录");return}const cur=recs[recs.length-1],prev=recs.length>1?recs[recs.length-2]:null,phase=phaseMeta(cur);text("breadthPhase",phase.label);text("phaseBadge",phase.code);text("breadthAction",phase.action);text("latestBar","最新记录 "+String(cur.t||"—"));text("breadthTimestamp","数据时间 "+String(data.generated_at||"—").replace("T"," "));
+  [["strongValue","strongDelta",cur.s,prev&&prev.s,1,"%"],["breakdownValue","breakdownDelta",cur.bd,prev&&prev.bd,1,"%"],["ntssValue","ntssDelta",cur.mid,prev&&prev.mid,2,""]].forEach(v=>{const out=metric(v[2],v[3],v[4],v[5]);text(v[0],out[0]);text(v[1],out[1])});
+  [["ma20Value",cur.a20,1,"%"],["ma50Value",cur.a50,1,"%"],["ma200Value",cur.a200,1,"%"],["momentumValue",cur.mom,2,""]].forEach(v=>text(v[0],finite(v[1])?(v[2]===2?P2:P1).format(v[1])+v[3]:"—"));
+  const tr=data.latest_transition;text("latestTransition",tr?String(tr.from||"—")+" → "+String(tr.to||"—")+" · "+String(tr.at||"—").replace("T"," "):"暂无阶段切换记录");renderChart(all,tr);text("qualityDetails",qualityText(data,cur));const b=document.getElementById("breadthFreshness");b.className="badge "+(data.stale?"stale":"fresh");b.textContent=data.stale?"数据已过期":((data.quality||{}).session_status==="closed"?"市场已收盘":"数据正常");b.setAttribute("role","status");busy(false)}
+async function loadBreadth(){const button=document.getElementById("refreshBtn");button.disabled=true;setLoading();try{const response=await fetch("/api/breadth");const data=await response.json();if(!response.ok)throw new Error(data.error||"请求失败");renderBreadth(data)}catch(error){setUnavailable(error instanceof Error?error.message:"未知错误")}finally{button.disabled=false}}
+document.getElementById("refreshBtn").addEventListener("click",loadBreadth);loadBreadth();
+</script></body></html>
 """

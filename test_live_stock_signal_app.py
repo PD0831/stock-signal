@@ -348,3 +348,71 @@ const safe=cell("<img onerror=bad>"); if(safe.textContent!=="<img onerror=bad>")
         text=True, capture_output=True, check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_breadth_page_is_lightweight_intraday_radar(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    html = TestClient(_import_app(monkeypatch, tmp_path).app).get("/breadth").text
+
+    for element_id in (
+        "breadthDashboard", "breadthPhase", "breadthAction", "breadthFreshness",
+        "breadthTimestamp", "strongValue", "strongDelta", "breakdownValue",
+        "breakdownDelta", "ntssValue", "ntssDelta", "intradayChart",
+        "latestTransition", "ma20Value", "ma50Value", "ma200Value",
+        "momentumValue", "qualityDetails",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "<details" in html and "研究详情" in html
+    assert "<svg" in html and "viewBox=" in html
+    assert "Plotly" not in html and "plotly" not in html
+    assert "innerHTML" not in html
+    assert "document.createElementNS" in html
+    assert 'aria-live="polite"' in html
+    assert 'aria-busy="true"' in html
+    assert "session_status" in html
+    assert "latest_transition" in html
+
+
+def test_breadth_javascript_renders_deltas_today_transition_and_resets_safely(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    html = TestClient(_import_app(monkeypatch, tmp_path).app).get("/breadth").text
+    script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[-1]
+    harness = r'''
+const ids=["breadthDashboard","refreshBtn","breadthPhase","phaseBadge","breadthAction",
+ "breadthFreshness","breadthTimestamp","strongValue","strongDelta","breakdownValue",
+ "breakdownDelta","ntssValue","ntssDelta","intradayChart","chartEmpty","latestTransition",
+ "ma20Value","ma50Value","ma200Value","momentumValue","qualityDetails","latestBar"];
+function el(id){return {id,textContent:"",className:"",hidden:false,children:[],attrs:{},style:{},
+ addEventListener(){},setAttribute(k,v){this.attrs[k]=v;},appendChild(v){this.children.push(v);},
+ replaceChildren(...v){this.children=v;}};}
+const elements=Object.fromEntries(ids.map(id=>[id,el(id)]));
+globalThis.document={getElementById(id){return elements[id]||(elements[id]=el(id));},
+ createElementNS(ns,tag){const node=el(tag);node.tag=tag;return node;}};
+globalThis.fetch=()=>new Promise(()=>{});
+'''
+    assertions = r'''
+const data={generated_at:"2026-07-11T15:20:00Z",stale:false,
+ quality:{session_status:"open",valid_count:498,failed_count:2},
+ records:[
+  {t:"2026-07-10T15:00:00Z",phase_code:"A",s:90,bd:1,mid:8},
+  {t:"2026-07-11T14:45:00Z",phase_code:"B",s:40,bd:20,mid:1,a20:55,a50:50,a200:45,mom:2,a20_n:490,a50_n:489,a200_n:480},
+  {t:"2026-07-11T15:00:00Z",phase_code:"E",s:43,bd:18,mid:.5,a20:56,a50:51,a200:46,mom:-1,a20_n:491,a50_n:490,a200_n:481}],
+ latest_transition:{from:"B",to:"E",at:"2026-07-11T15:00:00Z"}};
+renderBreadth(data);
+if(elements.strongDelta.textContent!=="+3.0% vs 15 分钟前") throw new Error("strong delta "+elements.strongDelta.textContent);
+if(elements.breakdownDelta.textContent!=="−2.0% vs 15 分钟前") throw new Error("breakdown delta");
+if(elements.ntssDelta.textContent!=="−0.50 vs 15 分钟前") throw new Error("ntss delta");
+if(elements.latestTransition.textContent.indexOf("B → E")<0) throw new Error("transition");
+if(elements.intradayChart.children.length<4) throw new Error("chart not rendered");
+if(elements.intradayChart.children.some(x=>String(x.attrs&&x.attrs.points||"").includes("90"))) throw new Error("prior day leaked");
+if(elements.qualityDetails.textContent.indexOf("有效 498")<0) throw new Error("quality");
+if(elements.breadthDashboard.attrs["aria-busy"]!=="false") throw new Error("busy success");
+setLoading();
+if(elements.strongValue.textContent!=="—"||elements.intradayChart.children.length!==0) throw new Error("loading reset");
+if(elements.breadthDashboard.attrs["aria-busy"]!=="true") throw new Error("busy loading");
+setUnavailable("<img onerror=bad>");
+if(elements.breadthAction.textContent.indexOf("<img onerror=bad>")<0) throw new Error("safe error text");
+if(elements.breadthFreshness.attrs.role!=="alert") throw new Error("alert state");
+'''
+    result = subprocess.run(["node", "-e", harness + script + assertions], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
