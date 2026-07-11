@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -28,7 +29,13 @@ def build_dashboard_snapshot(
     """Return the compact dashboard payload for picks from each universe."""
     buy_targets = []
     for universe, universe_picks in picks.items():
-        for pick, weight in zip(universe_picks, WEIGHTS):
+        universe_pick_list = list(universe_picks)
+        if len(universe_pick_list) > len(WEIGHTS):
+            raise ValueError(
+                f"{universe} has {len(universe_pick_list)} picks; "
+                f"at most {len(WEIGHTS)} are supported"
+            )
+        for pick, weight in zip(universe_pick_list, WEIGHTS):
             buy_targets.append(
                 {
                     **pick,
@@ -57,7 +64,7 @@ def build_breadth_snapshot(
     quality: Any = None,
 ) -> dict[str, Any]:
     """Return breadth records plus the most recent adjacent phase change."""
-    record_list = list(records)
+    record_list = deepcopy(list(records))
     latest_transition = None
     for previous, current in zip(record_list, record_list[1:]):
         previous_phase = _phase(previous)

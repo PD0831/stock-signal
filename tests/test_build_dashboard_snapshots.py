@@ -15,7 +15,11 @@ from scripts.build_dashboard_snapshots import (
 def test_dashboard_snapshot_merges_universes_and_assigns_weights():
     generated_at = datetime(2026, 7, 11, 9, 30, tzinfo=timezone.utc)
     picks = {
-        "nasdaq100": [{"symbol": "NVDA"}, {"symbol": "MSFT"}, {"symbol": "AAPL"}],
+        "nasdaq100": [
+            {"symbol": "NVDA", "rank": 1},
+            {"symbol": "MSFT", "rank": 2},
+            {"symbol": "AAPL", "rank": 3},
+        ],
         "sp500": [{"symbol": "JPM"}, {"symbol": "XOM"}],
     }
 
@@ -34,13 +38,37 @@ def test_dashboard_snapshot_merges_universes_and_assigns_weights():
         "market_status": {"phase": "B"},
         "quality": {"fresh": True},
         "buy_targets": [
-            {"symbol": "NVDA", "universe": "nasdaq100", "target_weight_pct": 60},
-            {"symbol": "MSFT", "universe": "nasdaq100", "target_weight_pct": 20},
-            {"symbol": "AAPL", "universe": "nasdaq100", "target_weight_pct": 20},
+            {
+                "symbol": "NVDA",
+                "rank": 1,
+                "universe": "nasdaq100",
+                "target_weight_pct": 60,
+            },
+            {
+                "symbol": "MSFT",
+                "rank": 2,
+                "universe": "nasdaq100",
+                "target_weight_pct": 20,
+            },
+            {
+                "symbol": "AAPL",
+                "rank": 3,
+                "universe": "nasdaq100",
+                "target_weight_pct": 20,
+            },
             {"symbol": "JPM", "universe": "sp500", "target_weight_pct": 60},
             {"symbol": "XOM", "universe": "sp500", "target_weight_pct": 20},
         ],
     }
+
+
+def test_dashboard_snapshot_rejects_more_picks_than_weights():
+    picks = {"nasdaq100": ({"symbol": f"S{rank}"} for rank in range(4))}
+
+    with pytest.raises(ValueError, match="nasdaq100.*3"):
+        build_dashboard_snapshot(
+            picks, generated_at=datetime(2026, 7, 11, tzinfo=timezone.utc)
+        )
 
 
 def test_breadth_snapshot_reports_last_phase_change():
@@ -67,6 +95,21 @@ def test_breadth_snapshot_reports_last_phase_change():
             "to": "E",
         },
     }
+
+
+def test_breadth_snapshot_is_independent_of_record_mutations():
+    records = [
+        {
+            "t": "2026-07-11T09:30:00+02:00",
+            "phase_code": "A",
+            "metrics": {"strong": 42},
+        }
+    ]
+
+    snapshot = build_breadth_snapshot(records)
+    records[0]["metrics"]["strong"] = 99
+
+    assert snapshot["records"][0]["metrics"]["strong"] == 42
 
 
 def test_breadth_snapshot_defaults_generated_at_and_has_no_transition(monkeypatch):
@@ -118,3 +161,22 @@ def test_write_json_atomic_leaves_existing_file_on_nan_failure(tmp_path):
 
     assert path.read_text(encoding="utf-8") == original
     assert json.loads(path.read_text(encoding="utf-8"))["value"] == "old"
+
+
+def test_write_json_atomic_cleans_temp_and_preserves_destination_on_replace_failure(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "snapshot.json"
+    original = '{"value": "old"}\n'
+    path.write_text(original, encoding="utf-8")
+
+    def fail_replace(self, target):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(type(path), "replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        write_json_atomic(path, {"value": "new"})
+
+    assert path.read_text(encoding="utf-8") == original
+    assert not list(tmp_path.glob(f".{path.name}.*.tmp"))
