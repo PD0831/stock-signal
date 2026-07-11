@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
@@ -14,6 +15,28 @@ from scripts.build_dashboard_snapshots import (
 )
 from scripts.market_snapshot_data import _calculate_breadth, _calc_ntss, _ntss_series
 from scripts.market_snapshot_data import SnapshotMarketData, daily_close_payload
+
+
+def test_refresh_workflow_has_safe_fifteen_minute_snapshot_contract():
+    workflow_path = Path(__file__).parents[1] / ".github/workflows/refresh_dashboard.yml"
+
+    assert workflow_path.exists(), "snapshot refresh workflow must be checked in"
+    workflow = workflow_path.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "cron: '*/15 13-21 * * 1-5'" in workflow
+    assert "permissions:\n  contents: write" in workflow
+    assert "group: mvs-dashboard-refresh" in workflow
+    assert "cancel-in-progress: true" in workflow
+    assert "ZoneInfo(\"America/New_York\")" in workflow
+    assert "09:30" in workflow and "16:00" in workflow
+    assert "steps.market-hours.outputs.should_run == 'true'" in workflow
+    assert "python scripts/build_dashboard_snapshots.py --output-dir data" in workflow
+    assert "git add -- data/dashboard_snapshot.json data/breadth_15m.json" in workflow
+    assert "git diff --cached --quiet" in workflow
+    assert "git push origin HEAD:${GITHUB_REF_NAME}" in workflow
+    assert "git add -A" not in workflow
+    assert "git add ." not in workflow
 
 
 def test_ntss_series_is_vix3m_minus_vix():

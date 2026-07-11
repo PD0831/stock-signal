@@ -1,0 +1,66 @@
+name: Refresh MVS dashboard snapshots
+
+on:
+  workflow_dispatch:
+  schedule:
+    # UTC window covers 09:30-16:00 New York during both EST and EDT.
+    - cron: '*/15 13-21 * * 1-5'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mvs-dashboard-refresh
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check New York market hours
+        id: market-hours
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, time
+          from zoneinfo import ZoneInfo
+
+          now = datetime.now(ZoneInfo("America/New_York"))
+          market_open = time.fromisoformat("09:30")
+          market_close = time.fromisoformat("16:00")
+          manual = os.environ["EVENT_NAME"] == "workflow_dispatch"
+          should_run = manual or (now.weekday() < 5 and market_open <= now.time() <= market_close)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"should_run={str(should_run).lower()}", file=output)
+          PY
+
+      - uses: actions/checkout@v4
+        if: steps.market-hours.outputs.should_run == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.market-hours.outputs.should_run == 'true'
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.market-hours.outputs.should_run == 'true'
+        run: python -m pip install -r requirements.txt
+
+      - name: Build snapshots
+        if: steps.market-hours.outputs.should_run == 'true'
+        run: python scripts/build_dashboard_snapshots.py --output-dir data
+
+      - name: Commit updated snapshots
+        if: steps.market-hours.outputs.should_run == 'true'
+        run: |
+          git add -- data/dashboard_snapshot.json data/breadth_15m.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: refresh MVS dashboard snapshots"
+          git push origin HEAD:${GITHUB_REF_NAME}
