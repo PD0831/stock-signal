@@ -102,6 +102,18 @@ def build_breadth_snapshot(
 ) -> dict[str, Any]:
     """Return breadth records plus the most recent adjacent phase change."""
     record_list = deepcopy(list(records))
+    for record in record_list:
+        # Real aggregate rows carry numeric breadth fields.  Project the same
+        # authoritative phase/action contract used by the homepage so clients
+        # never need to duplicate trading semantics.
+        if any(key in record for key in ("s", "bd", "mid", "mom")):
+            status = _market_status(record)
+            record.update({
+                "phase_label": status.get("phase"),
+                "action": status.get("action"),
+                "signal": status.get("signal"),
+                "short_type": status.get("short_type"),
+            })
     latest_transition = None
     for previous, current in zip(record_list, record_list[1:]):
         previous_phase = _phase(previous)
@@ -112,6 +124,10 @@ def build_breadth_snapshot(
                 "from": previous_phase,
                 "to": current_phase,
             }
+            if previous.get("phase_label") is not None:
+                latest_transition["from_label"] = previous["phase_label"]
+            if current.get("phase_label") is not None:
+                latest_transition["to_label"] = current["phase_label"]
 
     if generated_at is None:
         generated_at = datetime.now(timezone.utc)

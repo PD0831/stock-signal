@@ -575,6 +575,25 @@ def test_breadth_snapshot_reports_last_phase_change():
     }
 
 
+def test_real_breadth_rows_publish_authoritative_transition_labels_and_actions():
+    snapshot = build_breadth_snapshot([
+        {"t": "2026-07-11T09:45:00-04:00", "phase_code": "B", "s": 45, "bd": 20, "mid": 1},
+        {"t": "2026-07-11T10:00:00-04:00", "phase_code": "E", "s": 25, "bd": 40, "mid": 1},
+    ])
+
+    assert snapshot["records"][0] | {"t": "ignored", "s": 0, "bd": 0, "mid": 0} == {
+        "t": "ignored", "phase_code": "B", "s": 0, "bd": 0, "mid": 0,
+        "phase_label": "强势整固", "signal": "long", "short_type": None,
+        "action": "多头优先：使用 ADV Top10 → MA200 Top3。",
+    }
+    assert snapshot["records"][1]["action"] == "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"
+    assert snapshot["records"][1]["signal"] == "short_watch"
+    assert snapshot["latest_transition"] == {
+        "at": "2026-07-11T10:00:00-04:00", "from": "B", "from_label": "强势整固",
+        "to": "E", "to_label": "震荡整理",
+    }
+
+
 def test_breadth_snapshot_is_independent_of_record_mutations():
     records = [
         {
@@ -779,6 +798,10 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
             "mid": 1.25,
             "mom": 4.5,
             "phase_code": "B",
+            "phase_label": "强势整固",
+            "action": "多头优先：使用 ADV Top10 → MA200 Top3。",
+            "signal": "long",
+            "short_type": None,
         }
     ]
     for name in ("dashboard_snapshot.json", "breadth_15m.json"):

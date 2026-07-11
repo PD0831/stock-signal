@@ -395,15 +395,18 @@ const data={generated_at:"2026-07-11T15:20:00Z",stale:false,
  quality:{session_status:"open",valid_count:498,failed_count:2},
  records:[
   {t:"2026-07-10T15:00:00Z",phase_code:"A",s:90,bd:1,mid:8},
-  {t:"2026-07-11T14:45:00Z",phase_code:"B",s:40,bd:20,mid:1,a20:55,a50:50,a200:45,mom:2,a20_n:490,a50_n:489,a200_n:480},
-  {t:"2026-07-11T15:00:00Z",phase_code:"E",s:43,bd:18,mid:.5,a20:56,a50:51,a200:46,mom:-1,a20_n:491,a50_n:490,a200_n:481}],
- latest_transition:{from:"B",to:"E",at:"2026-07-11T15:00:00Z"}};
+  {t:"2026-07-11T14:45:00Z",phase_code:"B",phase_label:"强势整固",action:"继续持有",s:40,bd:20,mid:1,a20:55,a50:50,a200:45,mom:2,a20_n:490,a50_n:489,a200_n:480},
+  {t:"2026-07-11T15:00:00Z",phase_code:"E",phase_label:"震荡整理",action:"降低仓位",s:43,bd:18,mid:.5,a20:56,a50:51,a200:46,mom:-1,a20_n:491,a50_n:490,a200_n:481}],
+ latest_transition:{from:"B",from_label:"强势整固",to:"E",to_label:"震荡整理",at:"2026-07-11T15:00:00Z"}};
 renderBreadth(data);
+if(elements.breadthPhase.textContent!=="E 震荡整理") throw new Error("phase label");
+if(elements.breadthAction.textContent!=="降低仓位") throw new Error("producer action");
 if(elements.strongDelta.textContent!=="+3.0% vs 15 分钟前") throw new Error("strong delta "+elements.strongDelta.textContent);
 if(elements.breakdownDelta.textContent!=="−2.0% vs 15 分钟前") throw new Error("breakdown delta");
 if(elements.ntssDelta.textContent!=="−0.50 vs 15 分钟前") throw new Error("ntss delta");
-if(elements.latestTransition.textContent.indexOf("B → E")<0) throw new Error("transition");
+if(elements.latestTransition.textContent.indexOf("B 强势整固 → E 震荡整理")<0) throw new Error("transition");
 if(elements.intradayChart.children.length<4) throw new Error("chart not rendered");
+if(!elements.intradayChart.children.some(x=>x.tag==="text"&&x.textContent==="E 震荡整理")) throw new Error("transition annotation");
 if(elements.intradayChart.children.some(x=>String(x.attrs&&x.attrs.points||"").includes("90"))) throw new Error("prior day leaked");
 if(elements.qualityDetails.textContent.indexOf("有效 498")<0) throw new Error("quality");
 if(elements.breadthDashboard.attrs["aria-busy"]!=="false") throw new Error("busy success");
