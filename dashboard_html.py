@@ -182,10 +182,11 @@ SIGNALS_HTML = r"""<!doctype html>
     setText("ntssValue",ntss===null?"—":F2.format(ntss)); setText("momentumValue",momentum===null?"—":F2.format(momentum));
     setText("ntssState",status.ntss_state||"市场中轴");
     setText("currentAction",status.label||"等待市场确认"); setText("actionBasis",status.action||status.basis||"依据最新市场阶段与预计算候选股执行。");
-    const riskOff=(phase==="G"||phase==="H"||(ntss!==null&&ntss<0));
-    const trailWatch=!riskOff&&breakdown!==null&&breakdown>=35;
-    setText("shortRadarTitle",riskOff?"Risk Off · 空头保险":trailWatch?"Trail Exhaustion · 空头雷达":"当前无需主动做空");
-    setText("shortRadarText",riskOff?"风险条件已激活，优先控制总仓位并评估对冲。":trailWatch?"Breakdown 已达到观察阈值，等待空头确认。":"继续监测阶段切换；仅在转弱确认后评估对冲。");
+    const riskOff=status.signal==="short";
+    const trailWatch=status.signal==="short_watch";
+    const radarKind=status.short_type?status.short_type+" · ":"";
+    setText("shortRadarTitle",riskOff||trailWatch?radarKind+(status.label||"空头雷达"):(status.label||"观察")+" · 空头雷达关闭");
+    setText("shortRadarText",status.action||"等待生产者发布最新市场行动。");
   }
   function renderQuality(data){
     const quality=data.quality||{}, badge=document.getElementById("freshnessBadge");

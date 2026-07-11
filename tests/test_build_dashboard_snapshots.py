@@ -699,6 +699,7 @@ class FakeProvider:
     ("phase", "expected_phase", "strong", "breakdown", "ntss", "signal", "label", "action"),
     [
         ("A", "全面牛市", 60.0, 10.0, 2.0, "long", "多头窗口", "多头优先：使用 ADV Top10 → MA200 Top3。"),
+        ("B", "强势整固", 45.0, 20.0, -1.0, "long", "多头窗口", "多头优先：使用 ADV Top10 → MA200 Top3。"),
         # Numeric long precedence wins even if an inconsistent phase says G.
         ("G", "宽度承压", 15.0, 30.0, -1.0, "long", "多头窗口", "多头优先：使用 ADV Top10 → MA200 Top3。"),
         ("G", "宽度承压", 15.0, 55.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),

@@ -256,9 +256,12 @@ def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monk
     assert "候选不足" in html
     assert "const PHASES" not in html
     assert "status.phase" in html and "status.label" in html and "status.action" in html
-    assert 'phase==="G"||phase==="H"' in html
-    assert 'ntss!==null&&ntss<0' in html
-    assert 'breakdown!==null&&breakdown>=35' in html
+    assert 'status.signal==="short"' in html
+    assert 'status.signal==="short_watch"' in html
+    assert "status.short_type" in html
+    assert 'phase==="G"||phase==="H"' not in html
+    assert 'ntss!==null&&ntss<0' not in html
+    assert 'breakdown!==null&&breakdown>=35' not in html
     assert 'setText("shortRadarTitle","正在加载市场风险")' in html
     assert 'setText("qualityDisclosure","正在检查覆盖率与新鲜度。")' in html
 
