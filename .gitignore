@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.csv
+*.txt.bak
+.env
+.DS_Store
+*.log
+/data/*
+!/data/dashboard_snapshot.json
+!/data/breadth_15m.json
+.worktrees/

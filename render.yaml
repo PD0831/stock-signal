@@ -5,9 +5,11 @@ services:
     region: oregon
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn live_stock_signal_app:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn live_stock_signal_app:app --host 0.0.0.0 --port $PORT --workers 1
     envVars:
       - key: CACHE_DIR
         value: /tmp
       - key: WEB_CONCURRENCY
         value: "1"
+      - key: DATA_DIR
+        value: data
