@@ -13,7 +13,7 @@ from scripts.build_dashboard_snapshots import (
     run,
 )
 from scripts.market_snapshot_data import _calculate_breadth, _calc_ntss, _ntss_series
-from scripts.market_snapshot_data import SnapshotMarketData
+from scripts.market_snapshot_data import SnapshotMarketData, daily_close_payload
 
 
 def test_ntss_series_is_vix3m_minus_vix():
@@ -99,7 +99,8 @@ def test_provider_reuses_sp500_daily_download_for_signals_and_breadth(monkeypatc
     def fake_download(requested, *, period, interval, fields):
         nonlocal daily_calls
         if interval == "1d":
-            daily_calls += 1
+            if requested != ["^VIX", "^VIX3M"]:
+                daily_calls += 1
             return {s: pd.DataFrame({"Close": range(1, 202), "Volume": [1000] * 201}, index=days) for s in requested}
         if requested == ["^VIX", "^VIX3M"]:
             return {}
@@ -128,6 +129,20 @@ def test_provider_reports_sp500_fallback_source_and_error(monkeypatch):
         "universe_warning": "Primary SPY holdings source failed; using Wikipedia.",
         "universe_error": "SPDR unavailable",
     }
+
+
+def test_daily_close_uses_daily_only_ticker_and_aligns_daily_ntss():
+    symbols = [f"S{i:03}" for i in range(101)]
+    days = pd.date_range("2026-01-01", periods=2, freq="D")
+    daily = pd.DataFrame([[100.0] * 101, [110.0] * 101], index=days, columns=symbols)
+    daily.iloc[-1, -1] = 90.0
+    ntss = pd.Series([2.5], index=pd.DatetimeIndex(["2026-01-02"]))
+
+    payload = daily_close_payload(daily, denominator=101, ntss=ntss)
+
+    assert payload["current"]["valid_20_n"] == 101
+    assert payload["current"]["a20_n"] == 100
+    assert payload["current"]["mid"] == 2.5
 
 
 def test_dashboard_snapshot_merges_universes_and_assigns_weights():

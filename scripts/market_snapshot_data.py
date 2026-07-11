@@ -204,8 +204,17 @@ def _calculate_daily_breadth(daily: pd.DataFrame, denominator: int) -> pd.DataFr
     return result
 
 
-def daily_close_payload(daily: pd.DataFrame, denominator: int) -> dict[str, Any] | None:
-    valid = _calculate_daily_breadth(daily, denominator).dropna(subset=["strong", "breakdown"])
+def daily_close_payload(
+    daily: pd.DataFrame, denominator: int, ntss: pd.Series | None = None
+) -> dict[str, Any] | None:
+    calculated = _calculate_daily_breadth(daily, denominator)
+    if ntss is not None and not ntss.empty:
+        calculated.index = pd.DatetimeIndex(calculated.index).tz_localize(None).normalize()
+        aligned_ntss = ntss.dropna().sort_index()
+        aligned_ntss.index = pd.DatetimeIndex(aligned_ntss.index).tz_localize(None).normalize()
+        calculated = calculated.loc[calculated.index <= aligned_ntss.index[-1]]
+        calculated["ntss"] = aligned_ntss.reindex(calculated.index, method="ffill").values
+    valid = calculated.dropna(subset=["strong", "breakdown"])
     if valid.empty: return None
     current_time = valid.index[-1]
     payload = {"current": _record(current_time, valid.iloc[-1], f"{current_time:%Y-%m-%d} EOD")}
@@ -269,15 +278,18 @@ class SnapshotMarketData:
         common = sorted(set(daily) & set(intraday))
         if not common:
             raise RuntimeError("No valid 15-minute breadth data")
-        daily_wide = pd.concat([daily[symbol]["Close"].rename(symbol) for symbol in common], axis=1)
+        daily_wide_all = pd.concat([frame["Close"].rename(symbol) for symbol, frame in daily.items() if "Close" in frame], axis=1)
+        daily_wide = daily_wide_all[common]
         intraday_wide = pd.concat([intraday[symbol]["Close"].rename(symbol) for symbol in common], axis=1)
         breadth = _calculate_breadth(daily_wide, intraday_wide, denominator=len(symbols))
         breadth["momentum"] = _calc_momentum(breadth)
         vix_history = _download_fields(["^VIX", "^VIX3M"], period="5d", interval="15m", fields=("Close",))
+        daily_vix_history = _download_fields(["^VIX", "^VIX3M"], period="2y", interval="1d", fields=("Close",))
+        daily_ntss = _ntss_series(daily_vix_history)
         vix = pd.DataFrame()
         if "^VIX" in vix_history and "^VIX3M" in vix_history:
             vix = pd.concat([vix_history["^VIX"]["Close"].rename("vix"), vix_history["^VIX3M"]["Close"].rename("vix3m")], axis=1)
         breadth["ntss"] = _calc_ntss(vix, breadth.index)
         records = []
         for timestamp, row in breadth.iterrows(): records.append(_record(timestamp, row))
-        return {"records": records, "daily_close": daily_close_payload(daily_wide, len(symbols)), "n_stocks": len(symbols), "n_valid_15m": len(common), "n_valid_hourly": len(common), **self._universe_meta.get("sp500", {})}
+        return {"records": records, "daily_close": daily_close_payload(daily_wide_all, len(symbols), ntss=daily_ntss), "n_stocks": len(symbols), "n_valid_15m": len(common), "n_valid_hourly": len(common), **self._universe_meta.get("sp500", {})}
