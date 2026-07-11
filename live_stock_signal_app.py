@@ -63,9 +63,11 @@ def _validate_breadth(payload: dict[str, Any]) -> None:
         if not isinstance(record, dict) or not isinstance(record.get("t"), str):
             raise SnapshotUnavailable(f"breadth: record {index} must be object with string t")
         try:
-            datetime.fromisoformat(record["t"].replace("Z", "+00:00"))
+            timestamp = datetime.fromisoformat(record["t"].replace("Z", "+00:00"))
         except ValueError as exc:
             raise SnapshotUnavailable(f"breadth: record {index}.t must be ISO timestamp") from exc
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise SnapshotUnavailable(f"breadth: record {index}.t must include timezone")
         for field in numeric_fields.intersection(record):
             value = record[field]
             if value is not None and (not isinstance(value, (int, float)) or isinstance(value, bool)):

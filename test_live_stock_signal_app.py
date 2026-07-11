@@ -158,6 +158,20 @@ def test_invalid_breadth_record_is_unavailable(tmp_path, monkeypatch):
     assert "record" in response.json()["error"]
 
 
+def test_naive_breadth_timestamp_is_unavailable(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    path = tmp_path / "breadth_15m.json"
+    payload = json.loads(path.read_text())
+    payload["records"] = [{"t": "2026-07-11T15:00:00", "s": 40, "bd": 20}]
+    path.write_text(json.dumps(payload))
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    response = TestClient(app_module.app).get("/api/breadth")
+
+    assert response.status_code == 503
+    assert "timezone" in response.json()["error"].lower()
+
+
 def test_non_finite_json_is_unavailable(tmp_path, monkeypatch):
     _write_pair(tmp_path)
     path = tmp_path / "breadth_15m.json"
@@ -408,7 +422,7 @@ if(elements.ntssDelta.textContent!=="−0.50 vs 15 分钟前") throw new Error("
 if(elements.latestTransition.textContent.indexOf("B 强势整固 → E 震荡整理")<0) throw new Error("transition");
 if(elements.intradayChart.children.length<4) throw new Error("chart not rendered");
 if(!elements.intradayChart.children.some(x=>x.tag==="title"&&x.textContent.includes("2026-07-11"))) throw new Error("svg title");
-if(!elements.intradayChart.children.some(x=>x.tag==="desc"&&x.textContent.includes("2 个点"))) throw new Error("svg description");
+if(!elements.intradayChart.children.some(x=>x.tag==="desc"&&x.textContent.includes("2 个有效点"))) throw new Error("svg description");
 if(!elements.seriesSummary.textContent.includes("Strong 40.0% → 43.0%")) throw new Error("text summary");
 if(!elements.intradayChart.children.some(x=>x.tag==="text"&&x.textContent==="E 震荡整理")) throw new Error("transition annotation");
 if(elements.intradayChart.children.some(x=>String(x.attrs&&x.attrs.points||"").includes("90"))) throw new Error("prior day leaked");
@@ -423,7 +437,7 @@ if(elements.chartEmpty.hidden!==false||elements.chartEmpty.textContent!=="轨迹
 if(elements.breadthAction.textContent.indexOf("<img onerror=bad>")<0) throw new Error("safe error text");
 if(elements.breadthFreshness.attrs.role!=="alert") throw new Error("alert state");
 renderBreadth({...data,records:[data.records[2]],latest_transition:null});
-if(elements.chartEmpty.hidden!==true) throw new Error("one point chart state");
+if(elements.chartEmpty.hidden!==false||!elements.chartEmpty.textContent.includes("不足")) throw new Error("one point chart state");
 setLoading();if(elements.chartEmpty.hidden!==false||elements.seriesSummary.textContent!=="正在加载今日轨迹。") throw new Error("one point loading reset");
 setUnavailable("boom");if(elements.chartEmpty.hidden!==false||elements.seriesSummary.textContent!=="轨迹不可用。") throw new Error("one point error reset");
 const normalized=normalizeRecords([
@@ -432,6 +446,18 @@ const normalized=normalizeRecords([
 if(normalized.length!==3||normalized.map(r=>r.s).join("")!=="124") throw new Error("normalize order/dedupe");
 const gap=metric(4,1,1,"%",30);if(gap[1]!=="+3.0% vs 30 分钟前") throw new Error("30m gap");
 if(metric(4,1,1,"%",0)[1]!=="—") throw new Error("invalid elapsed");
+const mixed={...data,records:[
+ {...data.records[1],t:"2026-07-11T14:30:00Z",s:30,bd:25},
+ {...data.records[1],t:"2026-07-11T14:45:00Z",s:null,bd:20},
+ {...data.records[2],t:"2026-07-11T15:00:00Z",s:40,bd:15},
+ {...data.records[2],t:"2026-07-11T15:15:00Z",s:null,bd:9}],latest_transition:null};
+renderBreadth(mixed);
+if(elements.strongValue.textContent!=="—"||elements.strongDelta.textContent!=="—") throw new Error("incomplete latest card");
+if(!elements.seriesSummary.textContent.includes("共 2 个有效点")) throw new Error("mixed gap filtering");
+if(elements.seriesSummary.textContent.includes("NaN")||elements.seriesSummary.textContent.includes("Infinity")) throw new Error("unsafe mixed summary");
+renderBreadth({...data,records:[{...data.records[2],s:null,bd:null}],latest_transition:null});
+if(elements.chartEmpty.hidden!==false||!elements.chartEmpty.textContent.includes("不足")) throw new Error("all missing state");
+if(elements.seriesSummary.textContent.includes("NaN")||elements.seriesSummary.textContent.includes("Infinity")) throw new Error("unsafe missing summary");
 '''
     result = subprocess.run(["node", "-e", harness + script + assertions], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
