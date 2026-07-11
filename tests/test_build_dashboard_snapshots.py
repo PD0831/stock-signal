@@ -44,7 +44,9 @@ def test_refresh_workflow_separates_read_only_build_from_write_publish():
     assert publish["if"] == "needs.build.outputs.should_run == 'true'"
 
     build_checkout = next(step for step in build["steps"] if "actions/checkout" in step.get("uses", ""))
+    setup_python = next(step for step in build["steps"] if "actions/setup-python" in step.get("uses", ""))
     assert build_checkout["with"]["persist-credentials"] is False
+    assert setup_python["with"]["python-version"] == "3.12"
     assert all("@v" not in step.get("uses", "") for job in (build, publish) for step in job["steps"])
 
 
@@ -118,17 +120,107 @@ def test_snapshot_pair_validation_requires_schema_and_matching_generation(tmp_pa
 
     dashboard = tmp_path / "dashboard_snapshot.json"
     breadth = tmp_path / "breadth_15m.json"
-    dashboard.write_text('{"schema_version":1,"generation_id":"same"}')
-    breadth.write_text('{"schema_version":1,"generation_id":"same"}')
+    dashboard.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "same", "generated_at": "now",
+        "buy_targets": [], "market_status": {}, "quality": {},
+    }))
+    breadth.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "same", "generated_at": "now",
+        "records": [], "quality": {}, "latest_transition": None,
+    }))
     validate_snapshot_pair(dashboard, breadth)
 
-    breadth.write_text('{"schema_version":1,"generation_id":"different"}')
+    breadth.write_text(json.dumps({
+        "schema_version": 1, "generation_id": "different", "generated_at": "now",
+        "records": [], "quality": {}, "latest_transition": None,
+    }))
     with pytest.raises(ValueError, match="generation_id"):
         validate_snapshot_pair(dashboard, breadth)
 
-    breadth.write_text('{"schema_version":2,"generation_id":"same"}')
+    breadth.write_text(json.dumps({
+        "schema_version": 2, "generation_id": "same", "generated_at": "now",
+        "records": [], "quality": {}, "latest_transition": None,
+    }))
     with pytest.raises(ValueError, match="schema_version"):
         validate_snapshot_pair(dashboard, breadth)
+
+
+@pytest.mark.parametrize(
+    ("artifact", "field", "bad_value"),
+    [
+        ("dashboard", "schema_version", "1"),
+        ("dashboard", "generation_id", ""),
+        ("dashboard", "generated_at", None),
+        ("dashboard", "buy_targets", {}),
+        ("dashboard", "market_status", []),
+        ("dashboard", "quality", []),
+        ("breadth", "records", {}),
+        ("breadth", "quality", []),
+        ("breadth", "latest_transition", []),
+    ],
+)
+def test_snapshot_pair_validation_rejects_missing_or_wrong_types(
+    tmp_path, artifact, field, bad_value
+):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    payloads = {
+        "dashboard": {
+            "schema_version": 1, "generation_id": "same", "generated_at": "now",
+            "buy_targets": [], "market_status": {}, "quality": {},
+        },
+        "breadth": {
+            "schema_version": 1, "generation_id": "same", "generated_at": "now",
+            "records": [], "quality": {}, "latest_transition": None,
+        },
+    }
+    payloads[artifact][field] = bad_value
+    paths = {name: tmp_path / f"{name}.json" for name in payloads}
+    for name, payload in payloads.items():
+        paths[name].write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match=field):
+        validate_snapshot_pair(paths["dashboard"], paths["breadth"])
+
+
+def test_snapshot_pair_validation_rejects_truncated_json(tmp_path):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    dashboard = tmp_path / "dashboard.json"
+    breadth = tmp_path / "breadth.json"
+    dashboard.write_text('{"schema_version": 1')
+    breadth.write_text("{}")
+
+    with pytest.raises(json.JSONDecodeError):
+        validate_snapshot_pair(dashboard, breadth)
+
+
+@pytest.mark.parametrize(
+    ("artifact", "field"),
+    [("dashboard", "buy_targets"), ("breadth", "latest_transition")],
+)
+def test_snapshot_pair_validation_rejects_missing_required_fields(
+    tmp_path, artifact, field
+):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    payloads = {
+        "dashboard": {
+            "schema_version": 1, "generation_id": "same", "generated_at": "now",
+            "buy_targets": [], "market_status": {}, "quality": {},
+        },
+        "breadth": {
+            "schema_version": 1, "generation_id": "same", "generated_at": "now",
+            "records": [], "quality": {}, "latest_transition": None,
+        },
+    }
+    del payloads[artifact][field]
+    paths = {name: tmp_path / f"{name}.json" for name in payloads}
+    for name, payload in payloads.items():
+        paths[name].write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match=field):
+        validate_snapshot_pair(paths["dashboard"], paths["breadth"])
 
 
 def test_ntss_series_is_vix3m_minus_vix():
