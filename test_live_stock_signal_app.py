@@ -373,7 +373,8 @@ def test_breadth_page_is_lightweight_intraday_radar(tmp_path, monkeypatch):
     for element_id in (
         "breadthDashboard", "breadthPhase", "breadthAction", "breadthFreshness",
         "breadthTimestamp", "strongValue", "strongDelta", "breakdownValue",
-        "breakdownDelta", "ntssValue", "ntssDelta", "intradayChart",
+        "breakdownDelta", "ntssValue", "ntssDelta", "intradayChart", "ntssChart",
+        "rangeOptions", "coverageLabel", "cursorDetails",
         "latestTransition", "ma20Value", "ma50Value", "ma200Value",
         "momentumValue", "qualityDetails", "seriesSummary",
     ):
@@ -387,7 +388,8 @@ def test_breadth_page_is_lightweight_intraday_radar(tmp_path, monkeypatch):
     assert 'aria-live="polite"' in html
     assert 'aria-busy="true"' in html
     assert "session_status" in html
-    assert "latest_transition" in html
+    assert 'data-range="1D"' in html and 'data-range="3M"' in html
+    assert "localStorage" in html and "filterRange" in html
 
 
 def test_breadth_javascript_renders_deltas_today_transition_and_resets_safely(tmp_path, monkeypatch):
@@ -397,14 +399,16 @@ def test_breadth_javascript_renders_deltas_today_transition_and_resets_safely(tm
     harness = r'''
 const ids=["breadthDashboard","refreshBtn","breadthPhase","phaseBadge","breadthAction",
  "breadthFreshness","breadthTimestamp","strongValue","strongDelta","breakdownValue",
- "breakdownDelta","ntssValue","ntssDelta","intradayChart","chartEmpty","latestTransition",
- "ma20Value","ma50Value","ma200Value","momentumValue","qualityDetails","latestBar","seriesSummary"];
+ "breakdownDelta","ntssValue","ntssDelta","intradayChart","ntssChart","chartEmpty","latestTransition",
+ "ma20Value","ma50Value","ma200Value","momentumValue","qualityDetails","latestBar","seriesSummary",
+ "coverageLabel","cursorDetails","rangeOptions"];
 function el(id){return {id,textContent:"",className:"",hidden:false,children:[],attrs:{},style:{},
  addEventListener(){},setAttribute(k,v){this.attrs[k]=v;},appendChild(v){this.children.push(v);},
  replaceChildren(...v){this.children=v;}};}
 const elements=Object.fromEntries(ids.map(id=>[id,el(id)]));
 globalThis.document={getElementById(id){return elements[id]||(elements[id]=el(id));},
  createElementNS(ns,tag){const node=el(tag);node.tag=tag;return node;}};
+const stored={};globalThis.localStorage={getItem(k){return stored[k]||null;},setItem(k,v){stored[k]=String(v);}};
 globalThis.fetch=()=>new Promise(()=>{});
 '''
     assertions = r'''
@@ -423,16 +427,25 @@ if(elements.breakdownDelta.textContent!=="−2.0% vs 15 分钟前") throw new Er
 if(elements.ntssDelta.textContent!=="−0.50 vs 15 分钟前") throw new Error("ntss delta");
 if(elements.latestTransition.textContent.indexOf("B 强势整固 → E 震荡整理")<0) throw new Error("transition");
 if(elements.intradayChart.children.length<4) throw new Error("chart not rendered");
-if(!elements.intradayChart.children.some(x=>x.tag==="title"&&x.textContent.includes("2026-07-11"))) throw new Error("svg title");
-if(!elements.intradayChart.children.some(x=>x.tag==="desc"&&x.textContent.includes("2 个有效点"))) throw new Error("svg description");
-if(!elements.seriesSummary.textContent.includes("Strong 40.0% → 43.0%")) throw new Error("text summary");
+if(!elements.intradayChart.children.some(x=>x.tag==="title"&&x.textContent.includes("5D"))) throw new Error("svg title");
+if(!elements.intradayChart.children.some(x=>x.tag==="desc"&&x.textContent.includes("实际覆盖"))) throw new Error("svg description");
+if(!elements.ntssChart.children.some(x=>x.tag==="title"&&x.textContent.includes("NTSS"))) throw new Error("ntss title");
+if(!elements.seriesSummary.textContent.includes("共享时间轴")) throw new Error("text summary");
 if(!elements.intradayChart.children.some(x=>x.tag==="text"&&x.textContent==="E 震荡整理")) throw new Error("transition annotation");
-if(elements.intradayChart.children.some(x=>String(x.attrs&&x.attrs.points||"").includes("90"))) throw new Error("prior day leaked");
 if(elements.qualityDetails.textContent.indexOf("有效 498")<0) throw new Error("quality");
 if(elements.breadthDashboard.attrs["aria-busy"]!=="false") throw new Error("busy success");
+if(!elements.ntssChart.children.some(x=>x.tag==="line"&&x.attrs.stroke==="#8b98a9")) throw new Error("ntss zero axis");
+if(!elements.ntssChart.children.some(x=>x.tag==="polyline"&&x.attrs.stroke==="#5ba7ff")) throw new Error("ntss series");
+const many=[];for(let d=1;d<=25;d++){many.push({t:`2026-06-${String(d).padStart(2,"0")}T14:30:00Z`,s:d,bd:100-d,mid:d-13})}
+if(new Set(filterRange(many,"1D").map(x=>dayKey(x.t))).size!==1) throw new Error("1D filter");
+if(new Set(filterRange(many,"5D").map(x=>dayKey(x.t))).size!==5) throw new Error("5D filter");
+if(new Set(filterRange(many,"20D").map(x=>dayKey(x.t))).size!==20) throw new Error("20D filter");
+if(filterRange([{t:"2026-02-01T14:30:00Z"},{t:"2026-06-25T14:30:00Z"}],"3M").length!==1) throw new Error("3M filter");
+setRange("20D");if(stored.mvsBreadthRange!=="20D"||activeRange!=="20D") throw new Error("range persistence");
+inspectChart({key:"ArrowLeft",preventDefault(){}});if(!elements.cursorDetails.textContent.includes("NTSS")) throw new Error("shared cursor");
 setLoading();
 if(elements.strongValue.textContent!=="—"||elements.intradayChart.children.length!==0) throw new Error("loading reset");
-if(elements.chartEmpty.hidden!==false||elements.chartEmpty.textContent!=="正在加载今日轨迹。") throw new Error("loading empty reset");
+if(elements.chartEmpty.hidden!==false||elements.chartEmpty.textContent!=="正在加载历史轨迹。") throw new Error("loading empty reset");
 if(elements.breadthDashboard.attrs["aria-busy"]!=="true") throw new Error("busy loading");
 setUnavailable("<img onerror=bad>");
 if(elements.chartEmpty.hidden!==false||elements.chartEmpty.textContent!=="轨迹不可用。") throw new Error("error empty reset");
@@ -440,7 +453,7 @@ if(elements.breadthAction.textContent.indexOf("<img onerror=bad>")<0) throw new 
 if(elements.breadthFreshness.attrs.role!=="alert") throw new Error("alert state");
 renderBreadth({...data,records:[data.records[2]],latest_transition:null});
 if(elements.chartEmpty.hidden!==false||!elements.chartEmpty.textContent.includes("不足")) throw new Error("one point chart state");
-setLoading();if(elements.chartEmpty.hidden!==false||elements.seriesSummary.textContent!=="正在加载今日轨迹。") throw new Error("one point loading reset");
+setLoading();if(elements.chartEmpty.hidden!==false||elements.seriesSummary.textContent!=="正在加载历史轨迹。") throw new Error("one point loading reset");
 setUnavailable("boom");if(elements.chartEmpty.hidden!==false||elements.seriesSummary.textContent!=="轨迹不可用。") throw new Error("one point error reset");
 const normalized=normalizeRecords([
  {t:"2026-07-11T15:00:00Z",s:3},{t:"bad",s:9},{t:"2026-07-11T14:30:00Z",s:1},
@@ -455,7 +468,7 @@ const mixed={...data,records:[
  {...data.records[2],t:"2026-07-11T15:15:00Z",s:null,bd:9}],latest_transition:null};
 renderBreadth(mixed);
 if(elements.strongValue.textContent!=="—"||elements.strongDelta.textContent!=="—") throw new Error("incomplete latest card");
-if(!elements.seriesSummary.textContent.includes("共 2 个有效点")) throw new Error("mixed gap filtering");
+if(!elements.seriesSummary.textContent.includes("共享时间轴")) throw new Error("mixed gap filtering");
 if(elements.seriesSummary.textContent.includes("NaN")||elements.seriesSummary.textContent.includes("Infinity")) throw new Error("unsafe mixed summary");
 renderBreadth({...data,records:[{...data.records[2],s:null,bd:null}],latest_transition:null});
 if(elements.chartEmpty.hidden!==false||!elements.chartEmpty.textContent.includes("不足")) throw new Error("all missing state");
