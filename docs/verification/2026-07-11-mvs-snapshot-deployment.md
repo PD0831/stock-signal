@@ -26,3 +26,19 @@
   Playwright was not installed. Screenshot-level desktop/mobile inspection was
   therefore blocked. Static DOM inspection found all expected dashboard/radar
   nodes, and the populated-data JavaScript rendering contract tests passed.
+
+## Extended 15-minute history verification (2026-07-12)
+
+- Range controls: 1D / 5D / 20D / 3M; default and persisted range 5D.
+- Renderer stress fixture: 1,700 aggregate records with intermittent missing
+  NTSS values. The synthetic fixture was temporary and was not committed as
+  market data.
+- SVG node bounds under that fixture: fewer than 100 upper-panel nodes and fewer
+  than 150 NTSS-panel nodes.
+- Synthetic breadth JSON size: 535,154 bytes.
+- Guarded 50-cycle smoke with the large fixture: startup 66.47 MiB,
+  peak/final 87.58 MiB, peak growth 21.11 MiB.
+- Strong/Breakdown and NTSS panels use shared record positions. NTSS uses an
+  independent scale that always contains zero.
+- Screenshot-level desktop/mobile inspection remains subject to the caveat
+  above.

@@ -443,6 +443,10 @@ if(new Set(filterRange(many,"20D").map(x=>dayKey(x.t))).size!==20) throw new Err
 if(filterRange([{t:"2026-02-01T14:30:00Z"},{t:"2026-06-25T14:30:00Z"}],"3M").length!==1) throw new Error("3M filter");
 setRange("20D");if(stored.mvsBreadthRange!=="20D"||activeRange!=="20D") throw new Error("range persistence");
 inspectChart({key:"ArrowLeft",preventDefault(){}});if(!elements.cursorDetails.textContent.includes("NTSS")) throw new Error("shared cursor");
+const stress=[];for(let i=0;i<1700;i++){const t=new Date(Date.UTC(2026,3,1,13,30)+i*900000).toISOString();stress.push({t,phase_code:i%200<100?"A":"E",phase_label:i%200<100?"全面牛市":"震荡整理",action:"观察",s:40+i%30,bd:35-i%20,mid:i%17===0?null:(i%40-20)/10})}
+setRange("3M");renderBreadth({...data,records:stress});
+if(visibleRecords.length!==1700) throw new Error("3M stress record count");
+if(elements.intradayChart.children.length>100||elements.ntssChart.children.length>150) throw new Error("unbounded svg nodes");
 setLoading();
 if(elements.strongValue.textContent!=="—"||elements.intradayChart.children.length!==0) throw new Error("loading reset");
 if(elements.chartEmpty.hidden!==false||elements.chartEmpty.textContent!=="正在加载历史轨迹。") throw new Error("loading empty reset");

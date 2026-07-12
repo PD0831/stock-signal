@@ -52,10 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--iterations", type=int, default=25)
     parser.add_argument("--limit-mib", type=float, default=256)
     parser.add_argument("--growth-limit-mib", type=float, default=16)
+    parser.add_argument("--data-dir", type=Path)
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     port = _free_port()
-    env = {**os.environ, "DATA_DIR": str(root / "data")}
+    env = {**os.environ, "DATA_DIR": str((args.data_dir or root / "data").resolve())}
     descriptor, log_name = tempfile.mkstemp(prefix="mvs-memory-egress-", suffix=".jsonl")
     os.close(descriptor)
     egress_log = Path(log_name)
