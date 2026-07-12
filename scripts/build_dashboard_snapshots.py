@@ -7,6 +7,7 @@ import os
 import tempfile
 import argparse
 import uuid
+import calendar
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -100,6 +101,73 @@ def build_dashboard_snapshot(
 
 def _phase(record: Mapping[str, Any]) -> Any:
     return record.get("phase_code", record.get("phase"))
+
+
+def _aware_record_time(record: Mapping[str, Any]) -> datetime:
+    raw = record.get("t")
+    if not isinstance(raw, str):
+        raise ValueError("breadth record timestamp must be timezone-aware ISO-8601")
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("breadth record timestamp must be timezone-aware ISO-8601") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("breadth record timestamp must be timezone-aware ISO-8601")
+    return parsed
+
+
+def _subtract_calendar_months(value: datetime, months: int) -> datetime:
+    month_index = value.year * 12 + value.month - 1 - months
+    year, month_zero = divmod(month_index, 12)
+    month = month_zero + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
+
+
+def merge_breadth_history(
+    existing_records: list[dict[str, Any]],
+    new_records: list[dict[str, Any]],
+    *,
+    months: int = 3,
+) -> list[dict[str, Any]]:
+    """Merge aggregate records, preferring new duplicates and retaining months."""
+    if months <= 0:
+        raise ValueError("months must be positive")
+    merged: dict[datetime, dict[str, Any]] = {}
+    for source in (existing_records, new_records):
+        for original in source:
+            copied = deepcopy(original)
+            merged[_aware_record_time(copied)] = copied
+    if not merged:
+        return []
+    latest = max(merged)
+    cutoff = _subtract_calendar_months(latest, months).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return [merged[key] for key in sorted(merged) if key >= cutoff]
+
+
+def _existing_breadth_records(output_dir: Path) -> list[dict[str, Any]]:
+    path = output_dir / "breadth_15m.json"
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
+        )
+        if type(payload.get("schema_version")) is not int or payload["schema_version"] != SCHEMA_VERSION:
+            return []
+        if payload.get("provenance") != PROVENANCE or not isinstance(payload.get("records"), list):
+            return []
+        records = deepcopy(payload["records"])
+        for record in records:
+            if not isinstance(record, dict):
+                return []
+            _aware_record_time(record)
+        return records
+    except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+        return []
 
 
 def build_breadth_snapshot(
@@ -318,7 +386,11 @@ def run(
         for universe in ("nasdaq100", "sp500")
     }
     raw_breadth = provider.compute_breadth()
-    breadth_records = list(raw_breadth.get("records", []))
+    output_path = Path(output_dir)
+    breadth_records = merge_breadth_history(
+        _existing_breadth_records(output_path),
+        list(raw_breadth.get("records", [])),
+    )
     latest = breadth_records[-1] if breadth_records else None
     market_status = _market_status(latest)
     dashboard = build_dashboard_snapshot(
@@ -352,7 +424,7 @@ def run(
     dashboard["generation_id"] = generation_id
     breadth["generation_id"] = generation_id
     _publish_pair(
-        Path(output_dir),
+        output_path,
         {"dashboard_snapshot.json": dashboard, "breadth_15m.json": breadth},
     )
     return dashboard, breadth
