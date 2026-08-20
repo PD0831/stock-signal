@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-19 02:57 UTC",
+  "updated_at": "2026-08-20 02:57 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
@@ -7,11 +7,11 @@
   "expected_symbols": 503,
   "symbols": 503,
   "missing_symbols": [],
-  "rows": 250477,
-  "date_min": "2024-08-19",
-  "date_max": "2026-08-18",
+  "rows": 250100,
+  "date_min": "2024-08-20",
+  "date_max": "2026-08-19",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "17-Aug-2026",
+  "spy_holdings_as_of": "18-Aug-2026",
   "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
     {
