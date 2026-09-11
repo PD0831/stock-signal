@@ -295,7 +295,7 @@ def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monk
     assert '<table id="buyTargetTable"' in html
     headings = (
         "排名", "标的", "流动性腿", "趋势/Dip腿", "账户权重", "计划金额", "整股数量",
-        "最新价", "EMA200 距离", "ADV 排名", "数据时间",
+        "最新价", "EMA200 距离", "ADV 排名", "复核日",
     )
     assert [html.index(f">{heading}</th>") for heading in headings] == sorted(
         html.index(f">{heading}</th>") for heading in headings
@@ -410,6 +410,8 @@ if(elements.currentAction.textContent!=="多头窗口") throw new Error("success
 if(elements.ntssState.textContent!=="PANIC") throw new Error("success ntss state");
 if(elements.dashboard.attrs["aria-busy"]!=="false") throw new Error("success busy");
 if(elements.shortRadarTitle.textContent.includes("Risk Off")) throw new Error("radar re-derived risk");
+renderStatus({strategy:{action_label:"继续持有",action:"账本 Long"},market_status:{phase_code:"E",phase:"震荡整理",signal:"short_watch",label:"空头雷达"}});
+if(elements.currentAction.textContent!=="继续持有"||elements.actionBasis.textContent!=="账本 Long") throw new Error("ledger action");
 setLoading();
 if(elements.ntssState.textContent!=="等待") throw new Error("loading ntss reset");
 if(elements.dashboard.attrs["aria-busy"]!=="true") throw new Error("loading busy");

@@ -16,7 +16,7 @@ from typing import Any, Iterable, Mapping, Protocol
 
 SCHEMA_VERSION = 1
 WEIGHTS = (60, 20, 20)
-MVS_GROSS_EXPOSURE = 1.125
+MVS_GROSS_EXPOSURE = 1.15
 MVS_SLEEVE_WEIGHT = 0.5
 MVS_TREND_WEIGHTS = (0.60, 0.20, 0.20)
 PROVENANCE = {
@@ -68,42 +68,70 @@ def _timestamp(value: datetime) -> str:
 
 
 def build_mvs_portfolio(
-    nasdaq_signals: Mapping[str, Any], market_status: Mapping[str, Any]
+    nasdaq_signals: Mapping[str, Any],
+    market_status: Mapping[str, Any],
+    *,
+    position_state: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one account-level NASDAQ-100 portfolio from the two MVS sleeves.
 
-    Phase C is the dashboard's operational proxy for the backtest's explicit
-    Dip Long event.  The proxy remains labelled as development evidence so it
-    cannot be confused with the audited TradingView signal history.
+    The trade ledger decides whether the account is invested and which entry
+    selector applies.  Market breadth labels remain observational and cannot
+    silently open or close a position.
     """
-    is_long = market_status.get("signal") == "long"
-    phase_code = market_status.get("phase_code")
-    if not is_long:
-        selection_mode = "cash"
-        mode_basis = "mvs_risk_state"
-    elif phase_code == "C":
-        selection_mode = "dip_long_proxy"
-        mode_basis = "phase_c_proxy"
+    if position_state is None:
+        is_invested = market_status.get("signal") == "long"
+        entry_signal = "Dip Long" if market_status.get("phase_code") == "C" else "Long"
+        ledger = {"position_state": "long" if is_invested else "flat"}
     else:
-        selection_mode = "regular_long"
-        mode_basis = "mvs_long_state"
+        ledger = dict(position_state)
+        is_invested = ledger.get("position_state") == "long"
+        entry_signal = str(ledger.get("entry_signal", "Long"))
+    if not is_invested:
+        selection_mode = "cash"
+        mode_basis = "trade_ledger"
+    elif entry_signal == "Dip Long":
+        selection_mode = "dip_long_hold"
+        mode_basis = "open_dip_entry"
+    else:
+        selection_mode = "regular_long_hold"
+        mode_basis = "open_long_entry"
 
     configured_gross = round(MVS_GROSS_EXPOSURE * 100.0, 3)
     strategy = {
-        "strategy_id": "mvs_dipadv10_pool15_v1",
+        "strategy_id": "mvs_dipadv10_pool15_lev115_v2",
         "evidence_status": "development",
         "universe": "nasdaq100",
         "selection_mode": selection_mode,
         "mode_basis": mode_basis,
+        "position_state": "long" if is_invested else "flat",
         "configured_gross_exposure_pct": configured_gross,
         "gross_exposure_pct": 0.0,
         "reference_account_usd": 100000,
+        "action_label": "继续持有" if is_invested else "保持空仓",
+        "action": (
+            "交易账本仍为 Long；继续持有最近一次月度复核组合。"
+            "观察类宽度标签不触发清仓。"
+            if is_invested
+            else "交易账本为空仓；等待下一个有效 Long 或 Dip Long 入场事件。"
+        ),
         "execution": (
-            "Regular Long: next open; Phase C dip proxy: same close; "
+            "Regular Long: next open; Dip Long: same close; "
             "monthly review: next open; Risk Off: next open"
         ),
     }
-    if not is_long:
+    for field in (
+        "entry_signal",
+        "signal_date",
+        "execution_date",
+        "selection_as_of",
+        "source_as_of",
+        "source_status",
+        "source",
+    ):
+        if ledger.get(field) is not None:
+            strategy[field] = ledger[field]
+    if not is_invested:
         return {"strategy": strategy, "buy_targets": []}
 
     adv_ranked = list(nasdaq_signals.get("adv_ranked", []))
@@ -135,7 +163,7 @@ def build_mvs_portfolio(
     for pick in adv_ranked[:3]:
         add_target(pick, "liquidity_leg_weight_pct", liquidity_weight)
 
-    if selection_mode == "dip_long_proxy":
+    if selection_mode == "dip_long_hold":
         dip_weight = MVS_GROSS_EXPOSURE * MVS_SLEEVE_WEIGHT / 10.0 * 100.0
         for pick in adv_ranked[:10]:
             add_target(pick, "trend_leg_weight_pct", dip_weight)
@@ -155,12 +183,44 @@ def build_mvs_portfolio(
             "trend_leg_weight_pct",
             "target_weight_pct",
         ):
-            target[field] = round(float(target[field]), 3)
+            target[field] = round(float(target[field]), 4)
+    rounded_total = sum(target["target_weight_pct"] for target in targets)
+    rounding_residual = round(configured_gross - rounded_total, 4)
+    if targets and rounding_residual:
+        adjustment_target = next(
+            (
+                target
+                for target in targets
+                if target["liquidity_leg_weight_pct"]
+                and not target["trend_leg_weight_pct"]
+            ),
+            next(
+                (
+                    target
+                    for target in targets
+                    if bool(target["liquidity_leg_weight_pct"])
+                    != bool(target["trend_leg_weight_pct"])
+                ),
+                targets[-1],
+            ),
+        )
+        adjustment_field = (
+            "liquidity_leg_weight_pct"
+            if adjustment_target["liquidity_leg_weight_pct"]
+            else "trend_leg_weight_pct"
+        )
+        adjustment_target[adjustment_field] = round(
+            adjustment_target[adjustment_field] + rounding_residual, 4
+        )
+        adjustment_target["target_weight_pct"] = round(
+            adjustment_target["target_weight_pct"] + rounding_residual, 4
+        )
+    for target in targets:
         target["target_notional_per_100k_usd"] = round(
             target["target_weight_pct"] * 1000.0, 2
         )
     strategy["gross_exposure_pct"] = round(
-        sum(target["target_weight_pct"] for target in targets), 3
+        sum(target["target_weight_pct"] for target in targets), 2
     )
     return {"strategy": strategy, "buy_targets": targets}
 
@@ -354,13 +414,32 @@ def write_json_atomic(path: str | os.PathLike[str], payload: Any) -> None:
 
 
 class MarketDataProvider(Protocol):
-    def compute_signals(self, universe: str) -> Mapping[str, Any]: ...
+    def compute_signals(self, universe: str, as_of: str | None = None) -> Mapping[str, Any]: ...
 
     def compute_breadth(self) -> Mapping[str, Any]: ...
 
 
 def _json_bytes(payload: Any) -> bytes:
     return (json.dumps(payload, allow_nan=False, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+
+def _load_position_state(output_dir: Path) -> dict[str, Any]:
+    path = output_dir / "mvs_position_state.json"
+    if not path.exists():
+        return {"position_state": "flat", "state_source": "missing_ledger"}
+    with path.open(encoding="utf-8") as source:
+        state = json.load(source)
+    if not isinstance(state, dict) or state.get("position_state") not in {"long", "flat"}:
+        raise ValueError(f"{path}: position_state must be long or flat")
+    return state
+
+
+def _selection_cutoff(generated_at: datetime, position_state: Mapping[str, Any]) -> str:
+    generated_day = generated_at.astimezone(timezone.utc).date()
+    first_of_month = generated_day.replace(day=1)
+    previous_month_end = first_of_month - timedelta(days=1)
+    signal_date = datetime.fromisoformat(str(position_state["signal_date"])).date()
+    return max(signal_date, previous_month_end).isoformat()
 
 
 def _publish_pair(output_dir: Path, payloads: Mapping[str, Any]) -> None:
@@ -485,25 +564,34 @@ def run(
     *,
     provider: MarketDataProvider | None = None,
     generated_at: datetime | None = None,
+    position_state: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Compute and atomically publish the two compact dashboard artifacts."""
     if provider is None:
         provider = YFinanceMarketDataProvider()
     generated_at = generated_at or datetime.now(timezone.utc)
     freshness = snapshot_session_metadata(generated_at)
+    output_path = Path(output_dir)
+    ledger = dict(position_state) if position_state is not None else _load_position_state(output_path)
     signals = {
         universe: provider.compute_signals(universe)
         for universe in ("nasdaq100", "sp500")
     }
+    portfolio_signals = signals["nasdaq100"]
+    if ledger.get("position_state") == "long":
+        cutoff = _selection_cutoff(generated_at, ledger)
+        portfolio_signals = provider.compute_signals("nasdaq100", as_of=cutoff)
+        ledger["selection_as_of"] = portfolio_signals.get("selection_as_of", cutoff)
     raw_breadth = provider.compute_breadth()
-    output_path = Path(output_dir)
     breadth_records = merge_breadth_history(
         _existing_breadth_records(output_path),
         list(raw_breadth.get("records", [])),
     )
     latest = breadth_records[-1] if breadth_records else None
     market_status = _market_status(latest)
-    portfolio = build_mvs_portfolio(signals["nasdaq100"], market_status)
+    portfolio = build_mvs_portfolio(
+        portfolio_signals, market_status, position_state=ledger
+    )
     dashboard = build_dashboard_snapshot(
         {},
         generated_at=generated_at,
@@ -558,8 +646,8 @@ class YFinanceMarketDataProvider:
 
         self._implementation = SnapshotMarketData()
 
-    def compute_signals(self, universe: str) -> Mapping[str, Any]:
-        return self._implementation.compute_signals(universe)
+    def compute_signals(self, universe: str, as_of: str | None = None) -> Mapping[str, Any]:
+        return self._implementation.compute_signals(universe, as_of=as_of)
 
     def compute_breadth(self) -> Mapping[str, Any]:
         return self._implementation.compute_breadth()

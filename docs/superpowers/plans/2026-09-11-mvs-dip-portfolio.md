@@ -4,7 +4,7 @@
 
 **Goal:** Replace the dashboard's independent 60/20/20 market lists with one NASDAQ-100 MVS portfolio that implements the validated two-leg selection rules and shows account-level dollars and whole-share quantities.
 
-**Architecture:** The market-data provider will expose a unique ADV Top15 list and the EMA200 Top3 selected from that pool. A pure portfolio planner will select regular-long, Phase-C dip-proxy, or cash mode, combine duplicate symbols across the two 50% sleeves, and apply 1.125x development exposure. The JSON snapshot will carry strategy metadata and aggregated target weights; the display-only browser will convert those weights into dollar and whole-share quantities for the user's account value.
+**Architecture:** The market-data provider exposes a unique ADV Top15 list and the EMA200 Top3 selected from that pool. A checked-in trade ledger determines whether the account is holding a regular Long, holding a Dip Long, or flat; breadth watch labels cannot open or close it. The planner combines duplicate symbols across the two 50% sleeves, applies the latest completed month-end review, and uses 1.15x development exposure. The JSON snapshot carries strategy metadata and aggregated target weights; the display-only browser converts those weights into dollar and whole-share quantities for the user's account value.
 
 **Tech Stack:** Python 3.12, FastAPI, pytest, dependency-free browser JavaScript.
 
@@ -18,7 +18,7 @@
 
 - [x] **Step 1: Write failing portfolio tests**
 
-Add tests that supply ADV-ranked and EMA200-ranked fixtures and assert regular mode aggregates two 50% sleeves to 112.5%, Phase C uses ten equal ADV names in the second sleeve, and non-long states return no buy targets.
+Add tests that supply ADV-ranked and EMA200-ranked fixtures and assert regular mode aggregates two 50% sleeves to 115%, Dip Long uses ten equal ADV names in the second sleeve, and a flat ledger returns no buy targets.
 
 - [x] **Step 2: Run the focused tests and verify RED**
 
@@ -28,7 +28,7 @@ Expected: failures because `build_mvs_portfolio` does not exist.
 
 - [x] **Step 3: Implement the planner and provider fields**
 
-Add `MVS_GROSS_EXPOSURE = 1.125`, build the liquidity sleeve as ADV Top3 equal weight, build the regular trend sleeve as ADV15-to-EMA200 Top3 with 60/20/20 weights, build the dip sleeve as ADV Top10 equal weight, aggregate duplicate symbols, and return explicit strategy metadata. Extend `SnapshotMarketData.compute_signals()` to return `adv_ranked` and select EMA200 names from the first 15 unique issuers.
+Add `MVS_GROSS_EXPOSURE = 1.15`, build the liquidity sleeve as ADV Top3 equal weight, build the regular trend sleeve as ADV15-to-EMA200 Top3 with 60/20/20 weights, build the dip sleeve as ADV Top10 equal weight, aggregate duplicate symbols, and return explicit strategy metadata. Extend `SnapshotMarketData.compute_signals()` to return `adv_ranked`, select EMA200 names from the first 15 unique issuers, and rank at an explicit review date while retaining latest prices for sizing.
 
 - [x] **Step 4: Run focused tests and verify GREEN**
 
@@ -76,7 +76,7 @@ Run: `python3 scripts/build_dashboard_snapshots.py --output-dir data`
 
 Run: `python3 scripts/validate_dashboard_snapshots.py data/dashboard_snapshot.json data/breadth_15m.json`
 
-Expected: both schema-compatible artifacts validate and the dashboard target weights sum to either 0% in cash mode or 112.5% in a long mode.
+Expected: both schema-compatible artifacts validate and the dashboard target weights sum to either 0% in cash mode or 115% in a holding mode.
 
 - [x] **Step 2: Run the full suite**
 
@@ -86,7 +86,7 @@ Expected: all tests pass outside the filesystem sandbox; the local socket smoke 
 
 - [x] **Step 3: Document and inspect**
 
-Update the verification note with the two-leg rules, Phase-C proxy caveat, 1.125x development status, account sizing behavior, and test evidence. Serve the app and inspect desktop and mobile layouts for clipping and legibility.
+Update the verification note with the stateful trade ledger, two-leg rules, 1.15x development status, account sizing behavior, and test evidence. Serve the app and inspect desktop and mobile layouts for clipping and legibility.
 
 - [x] **Step 4: Commit and publish for review**
 

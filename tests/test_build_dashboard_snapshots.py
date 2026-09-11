@@ -17,7 +17,9 @@ from scripts.build_dashboard_snapshots import (
     write_json_atomic,
     run,
     snapshot_session_metadata,
+    _load_position_state,
     _market_status,
+    _selection_cutoff,
 )
 
 
@@ -46,17 +48,18 @@ def test_mvs_portfolio_regular_long_aggregates_both_sleeves():
         _mvs_signal_fixture(), {"signal": "long", "phase_code": "A"}
     )
 
-    assert MVS_GROSS_EXPOSURE == 1.125
-    assert portfolio["strategy"]["selection_mode"] == "regular_long"
-    assert portfolio["strategy"]["gross_exposure_pct"] == 112.5
-    assert sum(target["target_weight_pct"] for target in portfolio["buy_targets"]) == pytest.approx(112.5)
+    assert MVS_GROSS_EXPOSURE == 1.15
+    assert portfolio["strategy"]["selection_mode"] == "regular_long_hold"
+    assert portfolio["strategy"]["gross_exposure_pct"] == 115.0
+    assert sum(target["target_weight_pct"] for target in portfolio["buy_targets"]) == pytest.approx(115.0, abs=0.01)
+    assert sum(target["target_notional_per_100k_usd"] for target in portfolio["buy_targets"]) == pytest.approx(115000.0)
     targets = {target["symbol"]: target for target in portfolio["buy_targets"]}
-    assert targets["D"]["target_weight_pct"] == pytest.approx(33.75)
-    assert targets["A"]["target_weight_pct"] == pytest.approx(30.0)
-    assert targets["A"]["liquidity_leg_weight_pct"] == pytest.approx(18.75)
-    assert targets["A"]["trend_leg_weight_pct"] == pytest.approx(11.25)
-    assert targets["B"]["target_weight_pct"] == pytest.approx(18.75)
-    assert targets["E"]["target_weight_pct"] == pytest.approx(11.25)
+    assert targets["D"]["target_weight_pct"] == pytest.approx(34.5)
+    assert targets["A"]["target_weight_pct"] == pytest.approx(30.6667, abs=0.001)
+    assert targets["A"]["liquidity_leg_weight_pct"] == pytest.approx(19.1667, abs=0.001)
+    assert targets["A"]["trend_leg_weight_pct"] == pytest.approx(11.5)
+    assert targets["B"]["target_weight_pct"] == pytest.approx(19.1667, abs=0.001)
+    assert targets["E"]["target_weight_pct"] == pytest.approx(11.5)
 
 
 def test_mvs_portfolio_phase_c_uses_adv_top10_for_dip_sleeve():
@@ -64,24 +67,74 @@ def test_mvs_portfolio_phase_c_uses_adv_top10_for_dip_sleeve():
         _mvs_signal_fixture(), {"signal": "long", "phase_code": "C"}
     )
 
-    assert portfolio["strategy"]["selection_mode"] == "dip_long_proxy"
-    assert portfolio["strategy"]["mode_basis"] == "phase_c_proxy"
+    assert portfolio["strategy"]["selection_mode"] == "dip_long_hold"
+    assert portfolio["strategy"]["mode_basis"] == "open_dip_entry"
     targets = {target["symbol"]: target for target in portfolio["buy_targets"]}
     assert len(targets) == 10
-    assert targets["A"]["target_weight_pct"] == pytest.approx(24.375)
-    assert targets["A"]["trend_leg_weight_pct"] == pytest.approx(5.625)
-    assert targets["J"]["target_weight_pct"] == pytest.approx(5.625)
-    assert sum(target["target_weight_pct"] for target in targets.values()) == pytest.approx(112.5)
+    assert targets["A"]["target_weight_pct"] == pytest.approx(24.9167, abs=0.001)
+    assert targets["A"]["trend_leg_weight_pct"] == pytest.approx(5.75)
+    assert targets["J"]["target_weight_pct"] == pytest.approx(5.75)
+    assert sum(target["target_weight_pct"] for target in targets.values()) == pytest.approx(115.0, abs=0.01)
 
 
-def test_mvs_portfolio_non_long_state_holds_cash():
+def test_mvs_portfolio_open_long_survives_short_watch():
     portfolio = build_mvs_portfolio(
-        _mvs_signal_fixture(), {"signal": "short", "phase_code": "H"}
+        _mvs_signal_fixture(),
+        {"signal": "short_watch", "phase_code": "E"},
+        position_state={
+            "position_state": "long",
+            "entry_signal": "Long",
+            "signal_date": "2026-06-04",
+            "execution_date": "2026-06-05",
+            "selection_as_of": "2026-08-31",
+        },
+    )
+
+    assert portfolio["strategy"]["selection_mode"] == "regular_long_hold"
+    assert portfolio["strategy"]["position_state"] == "long"
+    assert portfolio["strategy"]["signal_date"] == "2026-06-04"
+    assert portfolio["strategy"]["gross_exposure_pct"] == 115.0
+    assert portfolio["buy_targets"]
+
+
+def test_mvs_portfolio_flat_ledger_holds_cash_even_when_market_is_long():
+    portfolio = build_mvs_portfolio(
+        _mvs_signal_fixture(),
+        {"signal": "long", "phase_code": "A"},
+        position_state={"position_state": "flat"},
     )
 
     assert portfolio["strategy"]["selection_mode"] == "cash"
     assert portfolio["strategy"]["gross_exposure_pct"] == 0.0
     assert portfolio["buy_targets"] == []
+
+
+def test_mvs_portfolio_open_dip_uses_entry_signal_not_current_phase():
+    portfolio = build_mvs_portfolio(
+        _mvs_signal_fixture(),
+        {"signal": "short_watch", "phase_code": "E"},
+        position_state={"position_state": "long", "entry_signal": "Dip Long"},
+    )
+
+    assert portfolio["strategy"]["selection_mode"] == "dip_long_hold"
+    assert len(portfolio["buy_targets"]) == 10
+
+
+def test_open_trade_ledger_selects_latest_completed_month_end(tmp_path):
+    state = {
+        "position_state": "long",
+        "entry_signal": "Long",
+        "signal_date": "2026-06-04",
+        "source_status": "Offen",
+    }
+    (tmp_path / "mvs_position_state.json").write_text(json.dumps(state))
+
+    loaded = _load_position_state(tmp_path)
+
+    assert loaded == state
+    assert _selection_cutoff(
+        datetime(2026, 9, 11, 14, 0, tzinfo=timezone.utc), loaded
+    ) == "2026-08-31"
 
 
 def test_dashboard_snapshot_accepts_precomputed_mvs_portfolio():
@@ -99,7 +152,7 @@ def test_dashboard_snapshot_accepts_precomputed_mvs_portfolio():
         buy_targets=portfolio["buy_targets"],
     )
 
-    assert snapshot["strategy"]["strategy_id"] == "mvs_dipadv10_pool15_v1"
+    assert snapshot["strategy"]["strategy_id"] == "mvs_dipadv10_pool15_lev115_v2"
     assert snapshot["buy_targets"] == portfolio["buy_targets"]
 
 
@@ -647,6 +700,28 @@ def test_provider_uses_ema200_for_trend_distance(monkeypatch):
     assert row["ema200"] != pytest.approx(round(closes.iloc[-200:].mean(), 2))
 
 
+def test_provider_ranks_at_review_date_but_keeps_latest_price(monkeypatch):
+    days = pd.date_range("2025-01-01", periods=240, freq="D")
+    closes = pd.Series([100.0] * 220 + [200.0] * 20, index=days)
+    frame = pd.DataFrame({"Close": closes, "Volume": [1_000_000] * len(days)})
+
+    provider = SnapshotMarketData()
+    monkeypatch.setattr(provider, "symbols", lambda universe: ["TEST"])
+    monkeypatch.setattr(
+        "scripts.market_snapshot_data._download_fields",
+        lambda requested, **kwargs: {"TEST": frame},
+    )
+
+    signals = provider.compute_signals("nasdaq100", as_of=str(days[219].date()))
+    row = signals["adv_ranked"][0]
+
+    assert signals["selection_as_of"] == str(days[219].date())
+    assert row["selection_close"] == 100.0
+    assert row["selection_date"] == str(days[219].date())
+    assert row["close"] == 200.0
+    assert row["last_date"] == str(days[-1].date())
+
+
 def test_provider_reports_sp500_fallback_source_and_error(monkeypatch):
     monkeypatch.setattr("scripts.market_snapshot_data.get_sp500", lambda: (_ for _ in ()).throw(RuntimeError("SPDR unavailable")))
     monkeypatch.setattr("scripts.market_snapshot_data._wikipedia_symbols", lambda universe: ["AAPL"])
@@ -882,8 +957,8 @@ class FakeProvider:
         self.signal_calls = []
         self.breadth_calls = 0
 
-    def compute_signals(self, universe):
-        self.signal_calls.append(universe)
+    def compute_signals(self, universe, as_of=None):
+        self.signal_calls.append((universe, as_of))
         adv_ranked = [
             {"symbol": f"N{rank:02d}" if universe == "nasdaq100" else f"S{rank:02d}",
              "rank": rank, "adv_rank": rank, "close": 100.0 + rank}
@@ -893,6 +968,7 @@ class FakeProvider:
             "universe": universe,
             "valid_count": 99 if universe == "nasdaq100" else 498,
             "failed_count": 2,
+            "selection_as_of": as_of or "2026-07-11",
             "adv_ranked": adv_ranked,
             "ema200_selected": [{**adv_ranked[index], "rank": index + 1} for index in (3, 4, 5)],
         }
@@ -963,13 +1039,27 @@ def test_market_status_phase_c_explains_dip_proxy_selection():
     assert status["action"] == "Phase C 牛市回调：使用 ADV Top3 流动性腿 + ADV Top10 等权 Dip 代理腿。"
 
 
-def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path):
+def test_run_uses_open_trade_ledger_and_monthly_selection_cutoff(tmp_path):
     provider = FakeProvider()
     generated_at = datetime(2026, 7, 11, 14, 0, tzinfo=timezone.utc)
 
-    dashboard, breadth = run(tmp_path, provider=provider, generated_at=generated_at)
+    dashboard, breadth = run(
+        tmp_path,
+        provider=provider,
+        generated_at=generated_at,
+        position_state={
+            "position_state": "long",
+            "entry_signal": "Long",
+            "signal_date": "2026-06-04",
+            "execution_date": "2026-06-05",
+        },
+    )
 
-    assert provider.signal_calls == ["nasdaq100", "sp500"]
+    assert provider.signal_calls == [
+        ("nasdaq100", None),
+        ("sp500", None),
+        ("nasdaq100", "2026-06-30"),
+    ]
     assert provider.breadth_calls == 1
     assert dashboard["market_status"] == {
         "phase_code": "B",
@@ -992,9 +1082,11 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
         "session_status": "closed",
         "fresh_until": "2026-07-13T14:00:00+00:00",
     }
-    assert dashboard["strategy"]["selection_mode"] == "regular_long"
-    assert dashboard["strategy"]["gross_exposure_pct"] == 112.5
-    assert sum(target["target_weight_pct"] for target in dashboard["buy_targets"]) == pytest.approx(112.5)
+    assert dashboard["strategy"]["selection_mode"] == "regular_long_hold"
+    assert dashboard["strategy"]["signal_date"] == "2026-06-04"
+    assert dashboard["strategy"]["selection_as_of"] == "2026-06-30"
+    assert dashboard["strategy"]["gross_exposure_pct"] == 115.0
+    assert sum(target["target_weight_pct"] for target in dashboard["buy_targets"]) == pytest.approx(115.0, abs=0.01)
     assert {target["universe"] for target in dashboard["buy_targets"]} == {"nasdaq100"}
     assert breadth["quality"] == {
         "expected_count": 500,
@@ -1060,8 +1152,8 @@ def test_run_preserves_both_public_files_when_either_payload_is_invalid(
     if invalid_part == "dashboard":
         original = provider.compute_signals
 
-        def invalid_signals(universe):
-            result = original(universe)
+        def invalid_signals(universe, as_of=None):
+            result = original(universe, as_of=as_of)
             result["ema200_selected"][0]["distance_pct"] = float("nan")
             return result
 
@@ -1074,7 +1166,15 @@ def test_run_preserves_both_public_files_when_either_payload_is_invalid(
         }
 
     with pytest.raises(ValueError):
-        run(tmp_path, provider=provider)
+        run(
+            tmp_path,
+            provider=provider,
+            position_state={
+                "position_state": "long",
+                "entry_signal": "Long",
+                "signal_date": "2026-06-04",
+            },
+        )
 
     assert json.loads(dashboard_path.read_text())["old"] == "dashboard"
     assert json.loads(breadth_path.read_text())["old"] == "breadth"

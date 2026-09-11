@@ -147,13 +147,13 @@ SIGNALS_HTML = r"""<!doctype html>
     <div class="table-scroll"><table id="buyTargetTable" aria-label="买入标的专业表格" hidden>
       <thead><tr><th scope="col">排名</th><th scope="col">标的</th><th scope="col">流动性腿</th><th scope="col">趋势/Dip腿</th>
         <th scope="col">账户权重</th><th scope="col">计划金额</th><th scope="col">整股数量</th><th scope="col">最新价</th>
-        <th scope="col">EMA200 距离</th><th scope="col">ADV 排名</th><th scope="col">数据时间</th></tr></thead>
+        <th scope="col">EMA200 距离</th><th scope="col">ADV 排名</th><th scope="col">复核日</th></tr></thead>
       <tbody id="buyTargetBody"></tbody></table></div>
   </section>
   <section class="below">
     <article class="radar" id="shortRadar"><div class="micro-label">空头雷达</div><h2 id="shortRadarTitle">等待市场状态</h2><p id="shortRadarText">只有在市场阶段转弱时才评估对冲；本页不自动生成交易。</p></article>
     <article class="radar"><div class="micro-label">数据质量</div><h2>预计算快照</h2><p id="qualityDisclosure">正在检查覆盖率与新鲜度。</p>
-      <details><summary>方法说明</summary><p>流动性腿占一半资金，持有 ADV Top3 等权；普通 Long 的第二腿从 ADV Top15 中按 EMA200 距离选 Top3，按 60% / 20% / 20%；Phase C 暂作 Dip Long 代理，第二腿改持 ADV Top10 等权。重复股票合并显示。1.125× 属 development 候选，尚未通过真正新样本验收。</p></details></article>
+      <details><summary>方法说明</summary><p>交易账本决定持仓；观察标签不会自动平仓。持仓期间每月底复核：流动性腿持有 ADV Top3 等权；普通 Long 的第二腿从 ADV Top15 中按 EMA200 距离选 Top3，按 60% / 20% / 20%；Dip Long 的第二腿改持 ADV Top10 等权。重复股票合并显示。1.15× 属 development 候选，尚未通过真正新样本验收。</p></details></article>
   </section>
 </main>
 <script>
@@ -180,7 +180,7 @@ SIGNALS_HTML = r"""<!doctype html>
     const shares=dollars!==null&&finite(target.close)&&target.close>0?Math.floor(dollars/target.close):null;
     tr.append(cell(target.rank,"rank"),cell(target.symbol,"symbol"),cell(liquidity),cell(trend),cell(weight,"weight"),
       cell(dollars===null?"—":"$"+F0.format(dollars)),cell(shares===null?"—":F0.format(shares)),cell(price),
-      cell(distance,finite(target.distance_pct)?(target.distance_pct>=0?"positive":"negative"):""),cell(adv),cell(target.last_date||"—"));
+      cell(distance,finite(target.distance_pct)?(target.distance_pct>=0?"positive":"negative"):""),cell(adv),cell(target.selection_date||target.last_date||"—"));
     return tr;
   }
   function sortedTargets(targets){ return [...targets].sort((a,b)=>a.rank-b.rank || a.universe.localeCompare(b.universe) || a.symbol.localeCompare(b.symbol)); }
@@ -192,10 +192,10 @@ SIGNALS_HTML = r"""<!doctype html>
     setText("targetCount",rows.length+" 个"); table.hidden=rows.length===0; message.hidden=rows.length>0;
     if(!rows.length) message.textContent=data.strategy&&data.strategy.selection_mode==="cash"?"当前状态为空仓：不买股票，账户净值 100% 保留现金。":"当前快照没有可执行买入标的。";
   }
-  function renderStrategy(data){ const strategy=data.strategy||{}; const names={regular_long:"普通 Long",dip_long_proxy:"Phase C · Dip代理",cash:"空仓"};
+  function renderStrategy(data){ const strategy=data.strategy||{}; const names={regular_long:"普通 Long",dip_long_proxy:"Phase C · Dip代理",regular_long_hold:"普通 Long · 持仓中",dip_long_hold:"Dip Long · 持仓中",cash:"空仓"};
     setText("strategyMode",names[strategy.selection_mode]||"—"); setText("grossExposure",finite(strategy.gross_exposure_pct)?F1.format(strategy.gross_exposure_pct)+"%":"—"); }
   function renderStatus(data){
-    const status=data.market_status||{}, phase=String(status.phase_code||status.phase||"—");
+    const status=data.market_status||{}, strategy=data.strategy||{}, phase=String(status.phase_code||status.phase||"—");
     const strong=finite(status.strong)?status.strong:valueFrom(status,["s"]);
     const breakdown=finite(status.breakdown)?status.breakdown:valueFrom(status,["bd"]);
     const ntss=finite(status.ntss)?status.ntss:valueFrom(status,["mid"]);
@@ -204,7 +204,7 @@ SIGNALS_HTML = r"""<!doctype html>
     setText("strongValue",strong===null?"—":F1.format(strong)+"%"); setText("breakdownValue",breakdown===null?"—":F1.format(breakdown)+"%");
     setText("ntssValue",ntss===null?"—":F2.format(ntss)); setText("momentumValue",momentum===null?"—":F2.format(momentum));
     setText("ntssState",status.ntss_state||"市场中轴");
-    setText("currentAction",status.label||"等待市场确认"); setText("actionBasis",status.action||status.basis||"依据最新市场阶段与预计算候选股执行。");
+    setText("currentAction",strategy.action_label||status.label||"等待市场确认"); setText("actionBasis",strategy.action||status.action||status.basis||"依据最新市场阶段与预计算候选股执行。");
     const riskOff=status.signal==="short";
     const trailWatch=status.signal==="short_watch";
     const radarKind=status.short_type?status.short_type+" · ":"";
@@ -223,7 +223,7 @@ SIGNALS_HTML = r"""<!doctype html>
       if(q.universe_error) parts.push(market+" 错误 "+q.universe_error);
       if(key==="nasdaq100"&&data.strategy&&data.strategy.selection_mode!=="cash"){
         const candidateCount=Array.isArray(data.buy_targets)?data.buy_targets.filter(target=>target.universe===key).length:0;
-        const expected=data.strategy.selection_mode==="dip_long_proxy"?10:3;
+        const expected=["dip_long_proxy","dip_long_hold"].includes(data.strategy.selection_mode)?10:3;
         if(candidateCount<expected) parts.push(market+" 候选不足 "+candidateCount+"/"+expected);
       }
     });
