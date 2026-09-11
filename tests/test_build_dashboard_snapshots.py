@@ -7,16 +7,100 @@ import pandas as pd
 import yaml
 
 from scripts.build_dashboard_snapshots import (
+    MVS_GROSS_EXPOSURE,
     PROVENANCE,
     SCHEMA_VERSION,
     WEIGHTS,
     build_breadth_snapshot,
     build_dashboard_snapshot,
+    build_mvs_portfolio,
     write_json_atomic,
     run,
     snapshot_session_metadata,
     _market_status,
 )
+
+
+def _mvs_signal_fixture():
+    adv = [
+        {
+            "symbol": symbol,
+            "rank": rank,
+            "adv_rank": rank,
+            "close": 100.0 + rank,
+            "distance_pct": 30.0 - rank,
+            "last_date": "2026-09-11",
+        }
+        for rank, symbol in enumerate("ABCDEFGHIJKLMNO", 1)
+    ]
+    trend = [
+        {**adv[3], "rank": 1},
+        {**adv[0], "rank": 2},
+        {**adv[4], "rank": 3},
+    ]
+    return {"adv_ranked": adv, "ema200_selected": trend}
+
+
+def test_mvs_portfolio_regular_long_aggregates_both_sleeves():
+    portfolio = build_mvs_portfolio(
+        _mvs_signal_fixture(), {"signal": "long", "phase_code": "A"}
+    )
+
+    assert MVS_GROSS_EXPOSURE == 1.125
+    assert portfolio["strategy"]["selection_mode"] == "regular_long"
+    assert portfolio["strategy"]["gross_exposure_pct"] == 112.5
+    assert sum(target["target_weight_pct"] for target in portfolio["buy_targets"]) == pytest.approx(112.5)
+    targets = {target["symbol"]: target for target in portfolio["buy_targets"]}
+    assert targets["D"]["target_weight_pct"] == pytest.approx(33.75)
+    assert targets["A"]["target_weight_pct"] == pytest.approx(30.0)
+    assert targets["A"]["liquidity_leg_weight_pct"] == pytest.approx(18.75)
+    assert targets["A"]["trend_leg_weight_pct"] == pytest.approx(11.25)
+    assert targets["B"]["target_weight_pct"] == pytest.approx(18.75)
+    assert targets["E"]["target_weight_pct"] == pytest.approx(11.25)
+
+
+def test_mvs_portfolio_phase_c_uses_adv_top10_for_dip_sleeve():
+    portfolio = build_mvs_portfolio(
+        _mvs_signal_fixture(), {"signal": "long", "phase_code": "C"}
+    )
+
+    assert portfolio["strategy"]["selection_mode"] == "dip_long_proxy"
+    assert portfolio["strategy"]["mode_basis"] == "phase_c_proxy"
+    targets = {target["symbol"]: target for target in portfolio["buy_targets"]}
+    assert len(targets) == 10
+    assert targets["A"]["target_weight_pct"] == pytest.approx(24.375)
+    assert targets["A"]["trend_leg_weight_pct"] == pytest.approx(5.625)
+    assert targets["J"]["target_weight_pct"] == pytest.approx(5.625)
+    assert sum(target["target_weight_pct"] for target in targets.values()) == pytest.approx(112.5)
+
+
+def test_mvs_portfolio_non_long_state_holds_cash():
+    portfolio = build_mvs_portfolio(
+        _mvs_signal_fixture(), {"signal": "short", "phase_code": "H"}
+    )
+
+    assert portfolio["strategy"]["selection_mode"] == "cash"
+    assert portfolio["strategy"]["gross_exposure_pct"] == 0.0
+    assert portfolio["buy_targets"] == []
+
+
+def test_dashboard_snapshot_accepts_precomputed_mvs_portfolio():
+    generated_at = datetime(2026, 9, 11, 14, 0, tzinfo=timezone.utc)
+    portfolio = build_mvs_portfolio(
+        _mvs_signal_fixture(), {"signal": "long", "phase_code": "A"}
+    )
+
+    snapshot = build_dashboard_snapshot(
+        {},
+        generated_at=generated_at,
+        market_status={"signal": "long", "phase_code": "A"},
+        quality={"fresh": True},
+        strategy=portfolio["strategy"],
+        buy_targets=portfolio["buy_targets"],
+    )
+
+    assert snapshot["strategy"]["strategy_id"] == "mvs_dipadv10_pool15_v1"
+    assert snapshot["buy_targets"] == portfolio["buy_targets"]
 
 
 def test_session_metadata_keeps_holiday_snapshot_fresh_until_next_open():
@@ -294,6 +378,59 @@ def test_publication_validator_rejects_unsafe_buy_targets(tmp_path, bad_target):
         validate_snapshot_pair(dashboard, breadth)
 
 
+def test_publication_validator_rejects_incomplete_strategy_target(tmp_path):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    quality = {"fresh_until": generated_at, "session_status": "closed"}
+    dashboard = tmp_path / "dashboard.json"
+    breadth = tmp_path / "breadth.json"
+    dashboard.write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION, "provenance": PROVENANCE,
+        "generation_id": "same", "generated_at": generated_at,
+        "strategy": {"strategy_id": "mvs_dipadv10_pool15_v1", "selection_mode": "regular_long",
+                     "gross_exposure_pct": 112.5, "reference_account_usd": 100000},
+        "buy_targets": [{"symbol": "AAPL", "universe": "nasdaq100", "rank": 1,
+                         "target_weight_pct": 30.0, "liquidity_leg_weight_pct": 18.75}],
+        "market_status": {}, "quality": quality,
+    }))
+    breadth.write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION, "provenance": PROVENANCE,
+        "generation_id": "same", "generated_at": generated_at,
+        "records": [], "quality": quality, "latest_transition": None,
+    }))
+
+    with pytest.raises(ValueError, match="trend_leg_weight_pct"):
+        validate_snapshot_pair(dashboard, breadth)
+
+
+def test_publication_validator_rejects_strategy_gross_mismatch(tmp_path):
+    from scripts.validate_dashboard_snapshots import validate_snapshot_pair
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    quality = {"fresh_until": generated_at, "session_status": "closed"}
+    dashboard = tmp_path / "dashboard.json"
+    breadth = tmp_path / "breadth.json"
+    dashboard.write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION, "provenance": PROVENANCE,
+        "generation_id": "same", "generated_at": generated_at,
+        "strategy": {"strategy_id": "mvs_dipadv10_pool15_v1", "selection_mode": "regular_long",
+                     "gross_exposure_pct": 112.5, "reference_account_usd": 100000},
+        "buy_targets": [{"symbol": "AAPL", "universe": "nasdaq100", "rank": 1,
+                         "target_weight_pct": 30.0, "liquidity_leg_weight_pct": 18.75,
+                         "trend_leg_weight_pct": 11.25}],
+        "market_status": {}, "quality": quality,
+    }))
+    breadth.write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION, "provenance": PROVENANCE,
+        "generation_id": "same", "generated_at": generated_at,
+        "records": [], "quality": quality, "latest_transition": None,
+    }))
+
+    with pytest.raises(ValueError, match="gross_exposure_pct"):
+        validate_snapshot_pair(dashboard, breadth)
+
+
 def test_publication_validator_rejects_non_finite_json(tmp_path):
     from scripts.validate_dashboard_snapshots import validate_snapshot_pair
 
@@ -476,12 +613,38 @@ def test_provider_reuses_sp500_daily_download_for_signals_and_breadth(monkeypatc
     monkeypatch.setattr(provider, "symbols", lambda universe: symbols)
     monkeypatch.setattr("scripts.market_snapshot_data._download_fields", fake_download)
 
-    provider.compute_signals("sp500")
+    signals = provider.compute_signals("sp500")
     result = provider.compute_breadth()
 
     assert daily_calls == 1
+    assert len(signals["adv_ranked"]) == 15
+    assert len(signals["ema200_selected"]) == 3
+    assert {row["symbol"] for row in signals["ema200_selected"]} <= {
+        row["symbol"] for row in signals["adv_ranked"]
+    }
     assert {"a20_n", "a50_n", "a200_n", "valid_20_n", "valid_50_n", "valid_200_n"} <= result["records"][0].keys()
     assert set(result["daily_close"]) == {"current", "previous"}
+
+
+def test_provider_uses_ema200_for_trend_distance(monkeypatch):
+    days = pd.date_range("2025-01-01", periods=220, freq="D")
+    closes = pd.Series([100.0] * 200 + [200.0] * 20, index=days)
+    frame = pd.DataFrame({"Close": closes, "Volume": [1_000_000] * len(days)})
+
+    provider = SnapshotMarketData()
+    monkeypatch.setattr(provider, "symbols", lambda universe: ["TEST"])
+    monkeypatch.setattr(
+        "scripts.market_snapshot_data._download_fields",
+        lambda requested, **kwargs: {"TEST": frame},
+    )
+
+    signals = provider.compute_signals("nasdaq100")
+    row = signals["ema200_selected"][0]
+    expected = closes.ewm(span=200, adjust=False, min_periods=200).mean().iloc[-1]
+
+    assert row["ema200"] == pytest.approx(round(expected, 2))
+    assert row["distance_pct"] == pytest.approx(round((200.0 / expected - 1) * 100, 2))
+    assert row["ema200"] != pytest.approx(round(closes.iloc[-200:].mean(), 2))
 
 
 def test_provider_reports_sp500_fallback_source_and_error(monkeypatch):
@@ -619,7 +782,7 @@ def test_real_breadth_rows_publish_authoritative_transition_labels_and_actions()
     assert snapshot["records"][0] | {"t": "ignored", "s": 0, "bd": 0, "mid": 0} == {
         "t": "ignored", "phase_code": "B", "s": 0, "bd": 0, "mid": 0,
         "phase_label": "强势整固", "signal": "long", "short_type": None,
-        "action": "多头优先：使用 ADV Top10 → MA200 Top3。",
+        "action": "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。",
     }
     assert snapshot["records"][1]["action"] == "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"
     assert snapshot["records"][1]["signal"] == "short_watch"
@@ -721,13 +884,17 @@ class FakeProvider:
 
     def compute_signals(self, universe):
         self.signal_calls.append(universe)
+        adv_ranked = [
+            {"symbol": f"N{rank:02d}" if universe == "nasdaq100" else f"S{rank:02d}",
+             "rank": rank, "adv_rank": rank, "close": 100.0 + rank}
+            for rank in range(1, 16)
+        ]
         return {
             "universe": universe,
             "valid_count": 99 if universe == "nasdaq100" else 498,
             "failed_count": 2,
-            "ma200_selected": [
-                {"symbol": "NVDA" if universe == "nasdaq100" else "JPM", "rank": 1}
-            ],
+            "adv_ranked": adv_ranked,
+            "ema200_selected": [{**adv_ranked[index], "rank": index + 1} for index in (3, 4, 5)],
         }
 
     def compute_breadth(self):
@@ -752,10 +919,10 @@ class FakeProvider:
 @pytest.mark.parametrize(
     ("phase", "expected_phase", "strong", "breakdown", "ntss", "signal", "label", "action"),
     [
-        ("A", "全面牛市", 60.0, 10.0, 2.0, "long", "多头窗口", "多头优先：使用 ADV Top10 → MA200 Top3。"),
-        ("B", "强势整固", 45.0, 20.0, -1.0, "long", "多头窗口", "多头优先：使用 ADV Top10 → MA200 Top3。"),
+        ("A", "全面牛市", 60.0, 10.0, 2.0, "long", "多头窗口", "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"),
+        ("B", "强势整固", 45.0, 20.0, -1.0, "long", "多头窗口", "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"),
         # Numeric long precedence wins even if an inconsistent phase says G.
-        ("G", "宽度承压", 15.0, 30.0, -1.0, "long", "多头窗口", "多头优先：使用 ADV Top10 → MA200 Top3。"),
+        ("G", "宽度承压", 15.0, 30.0, -1.0, "long", "多头窗口", "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"),
         ("G", "宽度承压", 15.0, 55.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),
         ("H", "恐慌出清", 10.0, 60.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),
         # Negative NTSS takes precedence over the breakdown watch threshold.
@@ -789,6 +956,13 @@ def test_market_status_preserves_all_established_phase_labels(code, name):
     assert _market_status({"phase_code": code, "bd": None, "mid": 1})["phase"] == name
 
 
+def test_market_status_phase_c_explains_dip_proxy_selection():
+    status = _market_status({"phase_code": "C", "bd": 20.0, "mid": 1.0})
+
+    assert status["signal"] == "long"
+    assert status["action"] == "Phase C 牛市回调：使用 ADV Top3 流动性腿 + ADV Top10 等权 Dip 代理腿。"
+
+
 def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path):
     provider = FakeProvider()
     generated_at = datetime(2026, 7, 11, 14, 0, tzinfo=timezone.utc)
@@ -809,7 +983,7 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
         "label": "多头窗口",
         "phase_class": "safe", "short_type": None,
         "ntss_state": "CAUTION", "ntss_class": "caution",
-        "action": "多头优先：使用 ADV Top10 → MA200 Top3。",
+        "action": "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。",
         "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic",
     }
     assert dashboard["quality"] == {
@@ -818,6 +992,10 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
         "session_status": "closed",
         "fresh_until": "2026-07-13T14:00:00+00:00",
     }
+    assert dashboard["strategy"]["selection_mode"] == "regular_long"
+    assert dashboard["strategy"]["gross_exposure_pct"] == 112.5
+    assert sum(target["target_weight_pct"] for target in dashboard["buy_targets"]) == pytest.approx(112.5)
+    assert {target["universe"] for target in dashboard["buy_targets"]} == {"nasdaq100"}
     assert breadth["quality"] == {
         "expected_count": 500,
         "valid_count": 497,
@@ -834,7 +1012,7 @@ def test_run_computes_each_market_once_and_publishes_compact_snapshots(tmp_path)
             "mom": 4.5,
             "phase_code": "B",
             "phase_label": "强势整固",
-            "action": "多头优先：使用 ADV Top10 → MA200 Top3。",
+            "action": "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。",
             "signal": "long",
             "short_type": None,
         }
@@ -884,7 +1062,7 @@ def test_run_preserves_both_public_files_when_either_payload_is_invalid(
 
         def invalid_signals(universe):
             result = original(universe)
-            result["ma200_selected"][0]["distance_pct"] = float("nan")
+            result["ema200_selected"][0]["distance_pct"] = float("nan")
             return result
 
         provider.compute_signals = invalid_signals

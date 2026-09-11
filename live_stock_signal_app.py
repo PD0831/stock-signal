@@ -39,6 +39,22 @@ def _validate_dashboard(payload: dict[str, Any]) -> None:
     _require(payload, "market_status", dict, "dashboard")
     _require(payload, "quality", dict, "dashboard")
     targets = _require(payload, "buy_targets", list, "dashboard")
+    strategy = payload.get("strategy")
+    if strategy is not None:
+        if not isinstance(strategy, dict):
+            raise SnapshotUnavailable("dashboard: strategy must be object")
+        strategy_fields = {
+            "strategy_id": str,
+            "selection_mode": str,
+            "gross_exposure_pct": (int, float),
+            "reference_account_usd": (int, float),
+        }
+        for field, expected in strategy_fields.items():
+            if not isinstance(strategy.get(field), expected) or isinstance(strategy.get(field), bool):
+                label = expected.__name__ if isinstance(expected, type) else "number"
+                raise SnapshotUnavailable(f"dashboard: strategy.{field} must be {label}")
+        if strategy["selection_mode"] not in {"regular_long", "dip_long_proxy", "cash"}:
+            raise SnapshotUnavailable("dashboard: strategy.selection_mode is invalid")
     fields = {"symbol": str, "universe": str, "rank": int, "target_weight_pct": (int, float)}
     for index, target in enumerate(targets):
         if not isinstance(target, dict):
@@ -53,6 +69,24 @@ def _validate_dashboard(payload: dict[str, Any]) -> None:
             raise SnapshotUnavailable(f"dashboard: buy_targets[{index}].universe is invalid")
         if target["rank"] <= 0:
             raise SnapshotUnavailable(f"dashboard: buy_targets[{index}].rank must be positive")
+        if strategy is not None:
+            for field in ("liquidity_leg_weight_pct", "trend_leg_weight_pct"):
+                value = target.get(field)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    raise SnapshotUnavailable(
+                        f"dashboard: buy_targets[{index}].{field} must be number"
+                    )
+            sleeve_total = target["liquidity_leg_weight_pct"] + target["trend_leg_weight_pct"]
+            if abs(sleeve_total - target["target_weight_pct"]) > 0.01:
+                raise SnapshotUnavailable(
+                    f"dashboard: buy_targets[{index}].target_weight_pct must equal sleeve weights"
+                )
+    if strategy is not None:
+        target_total = sum(float(target["target_weight_pct"]) for target in targets)
+        if abs(target_total - float(strategy["gross_exposure_pct"])) > 0.01:
+            raise SnapshotUnavailable(
+                "dashboard: strategy.gross_exposure_pct must equal buy target weights"
+            )
 
 
 def _validate_breadth(payload: dict[str, Any]) -> None:
