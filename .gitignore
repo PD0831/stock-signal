@@ -8,4 +8,5 @@ __pycache__/
 /data/*
 !/data/dashboard_snapshot.json
 !/data/breadth_15m.json
+!/data/mvs_position_state.json
 .worktrees/

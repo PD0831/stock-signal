@@ -249,18 +249,25 @@ class SnapshotMarketData:
         self._universe_meta[universe] = {"universe_source": "wikipedia_nasdaq100"}
         return symbols
 
-    def compute_signals(self, universe: str) -> dict[str, Any]:
+    def compute_signals(self, universe: str, as_of: str | None = None) -> dict[str, Any]:
         symbols = self.symbols(universe)
-        history = _download_fields(symbols, period="2y", interval="1d", fields=("Close", "Volume"))
-        self._daily[universe] = history
+        history = self._daily.get(universe)
+        if history is None:
+            history = _download_fields(symbols, period="2y", interval="1d", fields=("Close", "Volume"))
+            self._daily[universe] = history
+        cutoff = pd.Timestamp(as_of).date() if as_of is not None else None
         rows = []
         failed = set(symbols) - set(history)
         for symbol, frame in history.items():
-            clean = frame.dropna(subset=["Close", "Volume"])
+            full = frame.dropna(subset=["Close", "Volume"])
+            clean = full
+            if cutoff is not None:
+                clean = full.loc[[pd.Timestamp(value).date() <= cutoff for value in full.index]]
             if len(clean) < 63:
                 failed.add(symbol)
                 continue
-            close = float(clean["Close"].iloc[-1])
+            selection_close = float(clean["Close"].iloc[-1])
+            latest_close = float(full["Close"].iloc[-1])
             adv63 = float((clean["Close"].iloc[-63:] * clean["Volume"].iloc[-63:]).mean())
             ema200 = (
                 float(
@@ -272,14 +279,15 @@ class SnapshotMarketData:
                 if len(clean) >= 200
                 else None
             )
-            rows.append({"symbol": symbol, "close": round(close, 2), "adv63": adv63, "ema200": round(ema200, 2) if ema200 else None, "distance_pct": round((close / ema200 - 1) * 100, 2) if ema200 else None, "last_date": str(clean.index[-1].date())})
+            rows.append({"symbol": symbol, "close": round(latest_close, 2), "selection_close": round(selection_close, 2), "adv63": adv63, "ema200": round(ema200, 2) if ema200 else None, "distance_pct": round((selection_close / ema200 - 1) * 100, 2) if ema200 else None, "selection_date": str(pd.Timestamp(clean.index[-1]).date()), "last_date": str(pd.Timestamp(full.index[-1]).date())})
         rows.sort(key=lambda row: row["adv63"], reverse=True)
         for rank, row in enumerate(rows, 1): row["adv_rank"] = rank
         pool = _unique(rows, 15)
         ranked = sorted((row for row in pool if row["distance_pct"] is not None), key=lambda row: row["distance_pct"], reverse=True)
         picks = [{**row, "rank": rank} for rank, row in enumerate(ranked[:3], 1)]
         adv_ranked = [{**row, "rank": rank} for rank, row in enumerate(pool, 1)]
-        return {"universe": universe, "valid_count": len(rows), "failed_count": len(failed), "adv_ranked": adv_ranked, "ema200_selected": picks, **self._universe_meta.get(universe, {})}
+        selection_as_of = max((row["selection_date"] for row in rows), default=None)
+        return {"universe": universe, "valid_count": len(rows), "failed_count": len(failed), "selection_as_of": selection_as_of, "adv_ranked": adv_ranked, "ema200_selected": picks, **self._universe_meta.get(universe, {})}
 
     def compute_breadth(self) -> dict[str, Any]:
         symbols = self.symbols("sp500")

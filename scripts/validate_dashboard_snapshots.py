@@ -104,7 +104,7 @@ def validate_snapshot_pair(dashboard_path: Path, breadth_path: Path) -> None:
             value = strategy.get(field)
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 raise ValueError(f"{dashboard_path}: strategy.{field} must be a number")
-        if strategy["selection_mode"] not in {"regular_long", "dip_long_proxy", "cash"}:
+        if strategy["selection_mode"] not in {"regular_long", "dip_long_proxy", "regular_long_hold", "dip_long_hold", "cash"}:
             raise ValueError(f"{dashboard_path}: strategy.selection_mode is invalid")
     for index, target in enumerate(dashboard["buy_targets"]):
         if not isinstance(target, dict):

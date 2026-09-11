@@ -53,7 +53,7 @@ def _validate_dashboard(payload: dict[str, Any]) -> None:
             if not isinstance(strategy.get(field), expected) or isinstance(strategy.get(field), bool):
                 label = expected.__name__ if isinstance(expected, type) else "number"
                 raise SnapshotUnavailable(f"dashboard: strategy.{field} must be {label}")
-        if strategy["selection_mode"] not in {"regular_long", "dip_long_proxy", "cash"}:
+        if strategy["selection_mode"] not in {"regular_long", "dip_long_proxy", "regular_long_hold", "dip_long_hold", "cash"}:
             raise SnapshotUnavailable("dashboard: strategy.selection_mode is invalid")
     fields = {"symbol": str, "universe": str, "rank": int, "target_weight_pct": (int, float)}
     for index, target in enumerate(targets):
