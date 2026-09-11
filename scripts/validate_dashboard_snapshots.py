@@ -93,6 +93,19 @@ def validate_snapshot_pair(dashboard_path: Path, breadth_path: Path) -> None:
     _require_type(dashboard, "market_status", dict, dashboard_path)
     _require_type(dashboard, "quality", dict, dashboard_path)
     _validate_quality(dashboard["quality"], dashboard_path)
+    strategy = dashboard.get("strategy")
+    if strategy is not None:
+        if not isinstance(strategy, dict):
+            raise ValueError(f"{dashboard_path}: strategy must be an object")
+        for field in ("strategy_id", "selection_mode"):
+            if not isinstance(strategy.get(field), str) or not strategy[field]:
+                raise ValueError(f"{dashboard_path}: strategy.{field} must be a nonempty string")
+        for field in ("gross_exposure_pct", "reference_account_usd"):
+            value = strategy.get(field)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ValueError(f"{dashboard_path}: strategy.{field} must be a number")
+        if strategy["selection_mode"] not in {"regular_long", "dip_long_proxy", "cash"}:
+            raise ValueError(f"{dashboard_path}: strategy.selection_mode is invalid")
     for index, target in enumerate(dashboard["buy_targets"]):
         if not isinstance(target, dict):
             raise ValueError(f"{dashboard_path}: buy_targets[{index}] must be an object")
@@ -108,6 +121,24 @@ def validate_snapshot_pair(dashboard_path: Path, breadth_path: Path) -> None:
         if not isinstance(weight, (int, float)) or isinstance(weight, bool):
             raise ValueError(
                 f"{dashboard_path}: buy_targets[{index}].target_weight_pct must be a number"
+            )
+        if strategy is not None:
+            for field in ("liquidity_leg_weight_pct", "trend_leg_weight_pct"):
+                value = target.get(field)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    raise ValueError(
+                        f"{dashboard_path}: buy_targets[{index}].{field} must be a number"
+                    )
+            sleeve_total = target["liquidity_leg_weight_pct"] + target["trend_leg_weight_pct"]
+            if abs(sleeve_total - target["target_weight_pct"]) > 0.01:
+                raise ValueError(
+                    f"{dashboard_path}: buy_targets[{index}].target_weight_pct must equal sleeve weights"
+                )
+    if strategy is not None:
+        target_total = sum(float(target["target_weight_pct"]) for target in dashboard["buy_targets"])
+        if abs(target_total - float(strategy["gross_exposure_pct"])) > 0.01:
+            raise ValueError(
+                f"{dashboard_path}: strategy.gross_exposure_pct must equal buy target weights"
             )
     _require_type(breadth, "records", list, breadth_path)
     _require_type(breadth, "quality", dict, breadth_path)

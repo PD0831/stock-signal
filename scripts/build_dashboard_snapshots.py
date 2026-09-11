@@ -16,6 +16,9 @@ from typing import Any, Iterable, Mapping, Protocol
 
 SCHEMA_VERSION = 1
 WEIGHTS = (60, 20, 20)
+MVS_GROSS_EXPOSURE = 1.125
+MVS_SLEEVE_WEIGHT = 0.5
+MVS_TREND_WEIGHTS = (0.60, 0.20, 0.20)
 PROVENANCE = {
     "builder_name": "scripts.build_dashboard_snapshots",
     "builder_schema_version": SCHEMA_VERSION,
@@ -64,39 +67,143 @@ def _timestamp(value: datetime) -> str:
     return value.isoformat()
 
 
+def build_mvs_portfolio(
+    nasdaq_signals: Mapping[str, Any], market_status: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Build one account-level NASDAQ-100 portfolio from the two MVS sleeves.
+
+    Phase C is the dashboard's operational proxy for the backtest's explicit
+    Dip Long event.  The proxy remains labelled as development evidence so it
+    cannot be confused with the audited TradingView signal history.
+    """
+    is_long = market_status.get("signal") == "long"
+    phase_code = market_status.get("phase_code")
+    if not is_long:
+        selection_mode = "cash"
+        mode_basis = "mvs_risk_state"
+    elif phase_code == "C":
+        selection_mode = "dip_long_proxy"
+        mode_basis = "phase_c_proxy"
+    else:
+        selection_mode = "regular_long"
+        mode_basis = "mvs_long_state"
+
+    configured_gross = round(MVS_GROSS_EXPOSURE * 100.0, 3)
+    strategy = {
+        "strategy_id": "mvs_dipadv10_pool15_v1",
+        "evidence_status": "development",
+        "universe": "nasdaq100",
+        "selection_mode": selection_mode,
+        "mode_basis": mode_basis,
+        "configured_gross_exposure_pct": configured_gross,
+        "gross_exposure_pct": 0.0,
+        "reference_account_usd": 100000,
+        "execution": (
+            "Regular Long: next open; Phase C dip proxy: same close; "
+            "monthly review: next open; Risk Off: next open"
+        ),
+    }
+    if not is_long:
+        return {"strategy": strategy, "buy_targets": []}
+
+    adv_ranked = list(nasdaq_signals.get("adv_ranked", []))
+    trend_selected = list(nasdaq_signals.get("ema200_selected", []))
+    target_by_symbol: dict[str, dict[str, Any]] = {}
+
+    def add_target(pick: Mapping[str, Any], field: str, weight_pct: float) -> None:
+        symbol = str(pick.get("symbol", ""))
+        if not symbol:
+            return
+        target = target_by_symbol.setdefault(
+            symbol,
+            {
+                **pick,
+                "symbol": symbol,
+                "universe": "nasdaq100",
+                "liquidity_leg_weight_pct": 0.0,
+                "trend_leg_weight_pct": 0.0,
+                "target_weight_pct": 0.0,
+            },
+        )
+        for key, value in pick.items():
+            if value is not None and key != "rank":
+                target[key] = value
+        target[field] += weight_pct
+        target["target_weight_pct"] += weight_pct
+
+    liquidity_weight = MVS_GROSS_EXPOSURE * MVS_SLEEVE_WEIGHT / 3.0 * 100.0
+    for pick in adv_ranked[:3]:
+        add_target(pick, "liquidity_leg_weight_pct", liquidity_weight)
+
+    if selection_mode == "dip_long_proxy":
+        dip_weight = MVS_GROSS_EXPOSURE * MVS_SLEEVE_WEIGHT / 10.0 * 100.0
+        for pick in adv_ranked[:10]:
+            add_target(pick, "trend_leg_weight_pct", dip_weight)
+    else:
+        for pick, sleeve_weight in zip(trend_selected[:3], MVS_TREND_WEIGHTS):
+            weight = MVS_GROSS_EXPOSURE * MVS_SLEEVE_WEIGHT * sleeve_weight * 100.0
+            add_target(pick, "trend_leg_weight_pct", weight)
+
+    targets = sorted(
+        target_by_symbol.values(),
+        key=lambda target: (-target["target_weight_pct"], target["symbol"]),
+    )
+    for rank, target in enumerate(targets, 1):
+        target["rank"] = rank
+        for field in (
+            "liquidity_leg_weight_pct",
+            "trend_leg_weight_pct",
+            "target_weight_pct",
+        ):
+            target[field] = round(float(target[field]), 3)
+        target["target_notional_per_100k_usd"] = round(
+            target["target_weight_pct"] * 1000.0, 2
+        )
+    strategy["gross_exposure_pct"] = round(
+        sum(target["target_weight_pct"] for target in targets), 3
+    )
+    return {"strategy": strategy, "buy_targets": targets}
+
+
 def build_dashboard_snapshot(
     picks: Mapping[str, Iterable[Mapping[str, Any]]],
     *,
     generated_at: datetime,
     market_status: Any = None,
     quality: Any = None,
+    strategy: Mapping[str, Any] | None = None,
+    buy_targets: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return the compact dashboard payload for picks from each universe."""
-    buy_targets = []
-    for universe, universe_picks in picks.items():
-        universe_pick_list = list(universe_picks)
-        if len(universe_pick_list) > len(WEIGHTS):
-            raise ValueError(
-                f"{universe} has {len(universe_pick_list)} picks; "
-                f"at most {len(WEIGHTS)} are supported"
-            )
-        for pick, weight in zip(universe_pick_list, WEIGHTS):
-            buy_targets.append(
-                {
-                    **pick,
-                    "universe": universe,
-                    "target_weight_pct": weight,
-                }
-            )
+    targets = list(buy_targets) if buy_targets is not None else []
+    if buy_targets is None:
+        for universe, universe_picks in picks.items():
+            universe_pick_list = list(universe_picks)
+            if len(universe_pick_list) > len(WEIGHTS):
+                raise ValueError(
+                    f"{universe} has {len(universe_pick_list)} picks; "
+                    f"at most {len(WEIGHTS)} are supported"
+                )
+            for pick, weight in zip(universe_pick_list, WEIGHTS):
+                targets.append(
+                    {
+                        **pick,
+                        "universe": universe,
+                        "target_weight_pct": weight,
+                    }
+                )
 
-    return {
+    payload = {
         "schema_version": SCHEMA_VERSION,
         "provenance": deepcopy(PROVENANCE),
         "generated_at": _timestamp(generated_at),
         "market_status": market_status,
         "quality": quality,
-        "buy_targets": buy_targets,
+        "buy_targets": targets,
     }
+    if strategy is not None:
+        payload["strategy"] = dict(strategy)
+    return payload
 
 
 def _phase(record: Mapping[str, Any]) -> Any:
@@ -324,7 +431,10 @@ def _market_status(record: Mapping[str, Any] | None) -> dict[str, Any]:
     ntss = record.get("ntss", record.get("mid"))
     if breakdown is not None and breakdown < 35:
         signal, short_type, label = "long", None, "多头窗口"
-        action = "多头优先：使用 ADV Top10 → MA200 Top3。"
+        if phase_code == "C":
+            action = "Phase C 牛市回调：使用 ADV Top3 流动性腿 + ADV Top10 等权 Dip 代理腿。"
+        else:
+            action = "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"
     elif (ntss is not None and ntss < 0) or phase_code in {"G", "H"}:
         signal, short_type, label = "short", "Risk Off", "空头保险"
         action = "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"
@@ -393,14 +503,17 @@ def run(
     )
     latest = breadth_records[-1] if breadth_records else None
     market_status = _market_status(latest)
+    portfolio = build_mvs_portfolio(signals["nasdaq100"], market_status)
     dashboard = build_dashboard_snapshot(
-        {name: result.get("ma200_selected", []) for name, result in signals.items()},
+        {},
         generated_at=generated_at,
         market_status=market_status,
         quality={
             **{name: _quality(result) for name, result in signals.items()},
             **freshness,
         },
+        strategy=portfolio["strategy"],
+        buy_targets=portfolio["buy_targets"],
     )
     expected = int(raw_breadth.get("n_stocks", 0))
     valid = int(raw_breadth.get("n_valid_hourly", raw_breadth.get("n_valid_15m", 0)))

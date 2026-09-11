@@ -262,14 +262,24 @@ class SnapshotMarketData:
                 continue
             close = float(clean["Close"].iloc[-1])
             adv63 = float((clean["Close"].iloc[-63:] * clean["Volume"].iloc[-63:]).mean())
-            ma200 = float(clean["Close"].iloc[-200:].mean()) if len(clean) >= 200 else None
-            rows.append({"symbol": symbol, "close": round(close, 2), "adv63": adv63, "ma200": round(ma200, 2) if ma200 else None, "distance_pct": round((close / ma200 - 1) * 100, 2) if ma200 else None, "last_date": str(clean.index[-1].date())})
+            ema200 = (
+                float(
+                    clean["Close"]
+                    .ewm(span=200, adjust=False, min_periods=200)
+                    .mean()
+                    .iloc[-1]
+                )
+                if len(clean) >= 200
+                else None
+            )
+            rows.append({"symbol": symbol, "close": round(close, 2), "adv63": adv63, "ema200": round(ema200, 2) if ema200 else None, "distance_pct": round((close / ema200 - 1) * 100, 2) if ema200 else None, "last_date": str(clean.index[-1].date())})
         rows.sort(key=lambda row: row["adv63"], reverse=True)
         for rank, row in enumerate(rows, 1): row["adv_rank"] = rank
-        pool = _unique(rows, 10)
+        pool = _unique(rows, 15)
         ranked = sorted((row for row in pool if row["distance_pct"] is not None), key=lambda row: row["distance_pct"], reverse=True)
         picks = [{**row, "rank": rank} for rank, row in enumerate(ranked[:3], 1)]
-        return {"universe": universe, "valid_count": len(rows), "failed_count": len(failed), "ma200_selected": picks, **self._universe_meta.get(universe, {})}
+        adv_ranked = [{**row, "rank": rank} for rank, row in enumerate(pool, 1)]
+        return {"universe": universe, "valid_count": len(rows), "failed_count": len(failed), "adv_ranked": adv_ranked, "ema200_selected": picks, **self._universe_meta.get(universe, {})}
 
     def compute_breadth(self) -> dict[str, Any]:
         symbols = self.symbols("sp500")

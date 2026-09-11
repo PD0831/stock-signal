@@ -146,6 +146,51 @@ def test_invalid_nested_dashboard_fields_are_unavailable(tmp_path, monkeypatch):
     assert "symbol" in response.json()["error"]
 
 
+def test_strategy_buy_target_requires_sleeve_weights(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    path = tmp_path / "dashboard_snapshot.json"
+    payload = json.loads(path.read_text())
+    payload["strategy"] = {
+        "strategy_id": "mvs_dipadv10_pool15_v1",
+        "selection_mode": "regular_long",
+        "gross_exposure_pct": 112.5,
+        "reference_account_usd": 100000,
+    }
+    payload["buy_targets"] = [{
+        "symbol": "AAPL", "universe": "nasdaq100", "rank": 1,
+        "target_weight_pct": 30.0, "liquidity_leg_weight_pct": 18.75,
+    }]
+    path.write_text(json.dumps(payload))
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    response = TestClient(app_module.app).get("/api/signals")
+
+    assert response.status_code == 503
+    assert "trend_leg_weight_pct" in response.json()["error"]
+
+
+def test_strategy_gross_exposure_must_equal_target_sum(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    path = tmp_path / "dashboard_snapshot.json"
+    payload = json.loads(path.read_text())
+    payload["strategy"] = {
+        "strategy_id": "mvs_dipadv10_pool15_v1", "selection_mode": "regular_long",
+        "gross_exposure_pct": 112.5, "reference_account_usd": 100000,
+    }
+    payload["buy_targets"] = [{
+        "symbol": "AAPL", "universe": "nasdaq100", "rank": 1,
+        "target_weight_pct": 30.0, "liquidity_leg_weight_pct": 18.75,
+        "trend_leg_weight_pct": 11.25,
+    }]
+    path.write_text(json.dumps(payload))
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    response = TestClient(app_module.app).get("/api/signals")
+
+    assert response.status_code == 503
+    assert "gross_exposure_pct" in response.json()["error"]
+
+
 def test_invalid_breadth_record_is_unavailable(tmp_path, monkeypatch):
     _write_pair(tmp_path)
     path = tmp_path / "breadth_15m.json"
@@ -246,10 +291,11 @@ def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monk
     ):
         assert f'id="{element_id}"' in html
 
-    # One combined, semantic professional table in the approved C layout.
+    # One combined, semantic account-level MVS portfolio table.
     assert '<table id="buyTargetTable"' in html
     headings = (
-        "排名", "标的", "市场", "MA200 距离", "目标权重", "最新价", "ADV 排名", "数据时间",
+        "排名", "标的", "流动性腿", "趋势/Dip腿", "账户权重", "计划金额", "整股数量",
+        "最新价", "EMA200 距离", "ADV 排名", "数据时间",
     )
     assert [html.index(f">{heading}</th>") for heading in headings] == sorted(
         html.index(f">{heading}</th>") for heading in headings
@@ -290,11 +336,27 @@ def test_homepage_is_action_first_professional_decision_dashboard(tmp_path, monk
     assert 'setDashboardBusy(false)' in html
 
 
+def test_homepage_has_account_sizing_and_strategy_breakdown(tmp_path, monkeypatch):
+    _write_pair(tmp_path)
+    app_module = _import_app(monkeypatch, tmp_path)
+
+    html = TestClient(app_module.app).get("/").text
+
+    for element_id in ("accountEquity", "strategyMode", "grossExposure"):
+        assert f'id="{element_id}"' in html
+    for heading in ("流动性腿", "趋势/Dip腿", "账户权重", "计划金额", "整股数量"):
+        assert f">{heading}</th>" in html
+    assert "target.liquidity_leg_weight_pct" in html
+    assert "target.trend_leg_weight_pct" in html
+    assert "Math.floor" in html
+    assert 'accountEquity.addEventListener("input"' in html
+
+
 def test_builder_market_status_contract_is_consumed_by_homepage(tmp_path, monkeypatch):
     now = datetime.now(timezone.utc)
     class Provider:
         def compute_signals(self, universe):
-            return {"valid_count": 100, "failed_count": 2, "ma200_selected": [
+            return {"valid_count": 100, "failed_count": 2, "ema200_selected": [
                 {"symbol": "AAPL", "rank": 1, "distance_pct": 12.5}
             ]}
 
@@ -312,7 +374,7 @@ def test_builder_market_status_contract_is_consumed_by_homepage(tmp_path, monkey
         "phase_code": "C", "phase": "牛市回调", "signal": "long",
         "phase_class": "safe", "label": "多头窗口", "short_type": None,
         "ntss_state": "CAUTION", "ntss_class": "caution",
-        "action": "多头优先：使用 ADV Top10 → MA200 Top3。",
+        "action": "Phase C 牛市回调：使用 ADV Top3 流动性腿 + ADV Top10 等权 Dip 代理腿。",
         "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic",
         "as_of": now.isoformat(), "strong": 57.5, "breakdown": 13.5,
         "ntss": 1.25, "momentum": 4.5,

@@ -56,6 +56,11 @@ SIGNALS_HTML = r"""<!doctype html>
     #actionBasis { color:#b6c2cf; max-width:760px; }
     .phase-panel { padding:20px; display:flex; flex-direction:column; justify-content:space-between; gap:18px; }
     .phase-row,.fresh-row,.section-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .strategy-controls { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+    .strategy-meta { color:var(--muted); font-size:11px; }
+    .account-label { color:var(--muted); font-size:11px; font-weight:700; }
+    #accountEquity { width:132px; margin-left:6px; border:1px solid #354458; background:#0d141d;
+      color:var(--text); border-radius:7px; padding:7px 9px; font-variant-numeric:tabular-nums; }
     #marketPhase { font-size:22px; font-weight:800; }
     .badge { display:inline-flex; align-items:center; border:1px solid #43536a; border-radius:999px;
       padding:4px 9px; font-size:11px; font-weight:800; color:#c7d2df; }
@@ -72,7 +77,7 @@ SIGNALS_HTML = r"""<!doctype html>
     .section-sub { color:var(--muted); font-size:11px; }
     #buyTargetMessage { padding:24px 18px; color:var(--muted); }
     .table-scroll { overflow-x: auto; -webkit-overflow-scrolling:touch; }
-    table { width:100%; min-width:940px; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+    table { width:100%; min-width:1180px; border-collapse:collapse; font-variant-numeric:tabular-nums; }
     th,td { padding:11px 14px; border-bottom:1px solid #202a37; text-align:right; white-space:nowrap; }
     th { color:var(--muted); background:#0d141d; font-size:10px; text-transform:uppercase;
       letter-spacing:.06em; position:sticky; top:0; }
@@ -101,12 +106,15 @@ SIGNALS_HTML = r"""<!doctype html>
       #buyTargetTable { min-width:100%; }
       #buyTargetTable th:nth-child(3),#buyTargetTable td:nth-child(3),
       #buyTargetTable th:nth-child(4),#buyTargetTable td:nth-child(4),
-      #buyTargetTable th:nth-child(6),#buyTargetTable td:nth-child(6),
-      #buyTargetTable th:nth-child(7),#buyTargetTable td:nth-child(7),
-      #buyTargetTable th:nth-child(8),#buyTargetTable td:nth-child(8) { display:none; }
+      #buyTargetTable th:nth-child(8),#buyTargetTable td:nth-child(8),
+      #buyTargetTable th:nth-child(9),#buyTargetTable td:nth-child(9),
+      #buyTargetTable th:nth-child(10),#buyTargetTable td:nth-child(10),
+      #buyTargetTable th:nth-child(11),#buyTargetTable td:nth-child(11) { display:none; }
       #buyTargetTable th:nth-child(1),#buyTargetTable td:nth-child(1),
       #buyTargetTable th:nth-child(2),#buyTargetTable td:nth-child(2),
-      #buyTargetTable th:nth-child(5),#buyTargetTable td:nth-child(5) { display:table-cell; }
+      #buyTargetTable th:nth-child(5),#buyTargetTable td:nth-child(5),
+      #buyTargetTable th:nth-child(6),#buyTargetTable td:nth-child(6),
+      #buyTargetTable th:nth-child(7),#buyTargetTable td:nth-child(7) { display:table-cell; }
     }
   </style>
 </head>
@@ -131,48 +139,61 @@ SIGNALS_HTML = r"""<!doctype html>
     <article class="metric"><div class="metric-label">Momentum</div><div class="metric-value" id="momentumValue">—</div><div class="metric-note">净动量</div></article>
   </section>
   <section class="section" aria-labelledby="targetsTitle">
-    <div class="section-head"><div><h2 id="targetsTitle">买入标的</h2><div class="section-sub">NASDAQ 100 与 S&amp;P 500 合并 · 默认按排名、市场、代码排序</div></div><span class="badge" id="targetCount" role="status" aria-live="polite">0 个</span></div>
+    <div class="section-head"><div><h2 id="targetsTitle">MVS 目标组合</h2><div class="section-sub">NASDAQ 100 · 两腿合并后的账户级买入清单</div></div>
+      <div class="strategy-controls"><span class="strategy-meta"><span id="strategyMode">—</span> · 总暴露 <span id="grossExposure">—</span></span>
+        <label class="account-label" for="accountEquity">账户净值 USD<input id="accountEquity" type="number" min="1000" step="1000" value="100000" inputmode="decimal"></label>
+        <span class="badge" id="targetCount" role="status" aria-live="polite">0 个</span></div></div>
     <p id="buyTargetMessage" role="status" aria-live="polite">正在加载买入标的…</p>
     <div class="table-scroll"><table id="buyTargetTable" aria-label="买入标的专业表格" hidden>
-      <thead><tr><th scope="col">排名</th><th scope="col">标的</th><th scope="col">市场</th><th scope="col">MA200 距离</th>
-        <th scope="col">目标权重</th><th scope="col">最新价</th><th scope="col">ADV 排名</th><th scope="col">数据时间</th></tr></thead>
+      <thead><tr><th scope="col">排名</th><th scope="col">标的</th><th scope="col">流动性腿</th><th scope="col">趋势/Dip腿</th>
+        <th scope="col">账户权重</th><th scope="col">计划金额</th><th scope="col">整股数量</th><th scope="col">最新价</th>
+        <th scope="col">EMA200 距离</th><th scope="col">ADV 排名</th><th scope="col">数据时间</th></tr></thead>
       <tbody id="buyTargetBody"></tbody></table></div>
   </section>
   <section class="below">
     <article class="radar" id="shortRadar"><div class="micro-label">空头雷达</div><h2 id="shortRadarTitle">等待市场状态</h2><p id="shortRadarText">只有在市场阶段转弱时才评估对冲；本页不自动生成交易。</p></article>
     <article class="radar"><div class="micro-label">数据质量</div><h2>预计算快照</h2><p id="qualityDisclosure">正在检查覆盖率与新鲜度。</p>
-      <details><summary>方法说明</summary><p>候选股先按 63 日平均成交额筛选，再在流动性池中按距离 MA200 排名；目标权重为 60% / 20% / 20%。指标缺失时显示“—”，不会用旧值补齐。</p></details></article>
+      <details><summary>方法说明</summary><p>流动性腿占一半资金，持有 ADV Top3 等权；普通 Long 的第二腿从 ADV Top15 中按 EMA200 距离选 Top3，按 60% / 20% / 20%；Phase C 暂作 Dip Long 代理，第二腿改持 ADV Top10 等权。重复股票合并显示。1.125× 属 development 候选，尚未通过真正新样本验收。</p></details></article>
   </section>
 </main>
 <script>
   const F1 = new Intl.NumberFormat("zh-CN",{minimumFractionDigits:1,maximumFractionDigits:1});
   const F2 = new Intl.NumberFormat("zh-CN",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const F0 = new Intl.NumberFormat("zh-CN",{maximumFractionDigits:0});
+  let lastSignalData=null;
   function finite(value){ return typeof value === "number" && Number.isFinite(value); }
   function valueFrom(status,names){ for(const name of names){ if(finite(status[name])) return status[name]; } return null; }
   function setText(id,value){ document.getElementById(id).textContent=String(value); }
   function setDashboardBusy(busy){ document.getElementById("dashboard").setAttribute("aria-busy",busy?"true":"false"); }
   function cell(value,className){ const td=document.createElement("td"); td.textContent=String(value); if(className) td.className=className; return td; }
   function universeName(value){ return value === "nasdaq100" ? "NASDAQ 100" : value === "sp500" ? "S&P 500" : "—"; }
-  function targetRow(target){
+  function accountValue(){ const raw=Number(document.getElementById("accountEquity").value); return Number.isFinite(raw)&&raw>0?raw:100000; }
+  function targetRow(target,equity){
     const tr=document.createElement("tr");
     const distance=finite(target.distance_pct)?F1.format(target.distance_pct)+"%":"—";
     const price=finite(target.close)?"$"+F2.format(target.close):"—";
     const adv=Number.isInteger(target.adv_rank)?"#"+target.adv_rank:"—";
     const weight=finite(target.target_weight_pct)?F1.format(target.target_weight_pct)+"%":"—";
-    tr.append(cell(target.rank,"rank"),cell(target.symbol,"symbol"),cell(universeName(target.universe),"universe"),
-      cell(distance,finite(target.distance_pct)?(target.distance_pct>=0?"positive":"negative"):""),cell(weight,"weight"),
-      cell(price),cell(adv),cell(target.last_date||"—"));
+    const liquidity=finite(target.liquidity_leg_weight_pct)?F1.format(target.liquidity_leg_weight_pct)+"%":"—";
+    const trend=finite(target.trend_leg_weight_pct)?F1.format(target.trend_leg_weight_pct)+"%":"—";
+    const dollars=finite(target.target_weight_pct)?equity*target.target_weight_pct/100:null;
+    const shares=dollars!==null&&finite(target.close)&&target.close>0?Math.floor(dollars/target.close):null;
+    tr.append(cell(target.rank,"rank"),cell(target.symbol,"symbol"),cell(liquidity),cell(trend),cell(weight,"weight"),
+      cell(dollars===null?"—":"$"+F0.format(dollars)),cell(shares===null?"—":F0.format(shares)),cell(price),
+      cell(distance,finite(target.distance_pct)?(target.distance_pct>=0?"positive":"negative"):""),cell(adv),cell(target.last_date||"—"));
     return tr;
   }
   function sortedTargets(targets){ return [...targets].sort((a,b)=>a.rank-b.rank || a.universe.localeCompare(b.universe) || a.symbol.localeCompare(b.symbol)); }
   function renderTargets(data){
     const rows=sortedTargets(Array.isArray(data.buy_targets)?data.buy_targets:[]);
     const table=document.getElementById("buyTargetTable"), message=document.getElementById("buyTargetMessage");
-    document.getElementById("buyTargetBody").replaceChildren(...rows.map(targetRow));
+    document.getElementById("buyTargetBody").replaceChildren(...rows.map(target=>targetRow(target,accountValue())));
     message.setAttribute("role","status");
     setText("targetCount",rows.length+" 个"); table.hidden=rows.length===0; message.hidden=rows.length>0;
-    if(!rows.length) message.textContent="当前快照没有可执行买入标的。";
+    if(!rows.length) message.textContent=data.strategy&&data.strategy.selection_mode==="cash"?"当前状态为空仓：不买股票，账户净值 100% 保留现金。":"当前快照没有可执行买入标的。";
   }
+  function renderStrategy(data){ const strategy=data.strategy||{}; const names={regular_long:"普通 Long",dip_long_proxy:"Phase C · Dip代理",cash:"空仓"};
+    setText("strategyMode",names[strategy.selection_mode]||"—"); setText("grossExposure",finite(strategy.gross_exposure_pct)?F1.format(strategy.gross_exposure_pct)+"%":"—"); }
   function renderStatus(data){
     const status=data.market_status||{}, phase=String(status.phase_code||status.phase||"—");
     const strong=finite(status.strong)?status.strong:valueFrom(status,["s"]);
@@ -200,8 +221,11 @@ SIGNALS_HTML = r"""<!doctype html>
       if(q.universe_source) parts.push(market+" 来源 "+q.universe_source);
       if(q.universe_warning) parts.push(market+" 警告 "+q.universe_warning);
       if(q.universe_error) parts.push(market+" 错误 "+q.universe_error);
-      const candidateCount=Array.isArray(data.buy_targets)?data.buy_targets.filter(target=>target.universe===key).length:0;
-      if(candidateCount<3) parts.push(market+" 候选不足 "+candidateCount+"/3");
+      if(key==="nasdaq100"&&data.strategy&&data.strategy.selection_mode!=="cash"){
+        const candidateCount=Array.isArray(data.buy_targets)?data.buy_targets.filter(target=>target.universe===key).length:0;
+        const expected=data.strategy.selection_mode==="dip_long_proxy"?10:3;
+        if(candidateCount<expected) parts.push(market+" 候选不足 "+candidateCount+"/"+expected);
+      }
     });
     if(quality.session_status) parts.push(quality.session_status==="open"?"交易时段":"非交易时段");
     if(data.stale) parts.push("页面继续展示上次成功快照");
@@ -209,7 +233,7 @@ SIGNALS_HTML = r"""<!doctype html>
   }
   function setUnavailable(message){
     setText("currentAction","暂缓交易"); setText("actionBasis","快照不可用："+message); setText("marketPhase","—");
-    setText("phaseBadge","未知"); setText("dataTimestamp","数据时间 —"); setText("targetCount","0 个");
+    setText("phaseBadge","未知"); setText("dataTimestamp","数据时间 —"); setText("targetCount","0 个"); setText("strategyMode","—"); setText("grossExposure","—");
     const badge=document.getElementById("freshnessBadge"); badge.className="badge unavailable"; badge.textContent="不可用";
     ["strongValue","breakdownValue","ntssValue","momentumValue"].forEach(id=>setText(id,"—"));
     setText("ntssState","—");
@@ -220,7 +244,7 @@ SIGNALS_HTML = r"""<!doctype html>
   }
   function setLoading(){
     setText("currentAction","正在加载"); setText("actionBasis","正在读取最新预计算快照。"); setText("marketPhase","—");
-    setText("phaseBadge","等待"); setText("dataTimestamp","数据时间 —"); setText("targetCount","0 个");
+    setText("phaseBadge","等待"); setText("dataTimestamp","数据时间 —"); setText("targetCount","0 个"); setText("strategyMode","—"); setText("grossExposure","—");
     const badge=document.getElementById("freshnessBadge"); badge.className="badge"; badge.textContent="加载中";
     ["strongValue","breakdownValue","ntssValue","momentumValue"].forEach(id=>setText(id,"—"));
     setText("ntssState","等待");
@@ -233,11 +257,12 @@ SIGNALS_HTML = r"""<!doctype html>
   async function runSignal(){
     const button=document.getElementById("runBtn"); button.disabled=true; setLoading();
     try { const response=await fetch("/api/signals"); const data=await response.json(); if(!response.ok) throw new Error(data.error||"请求失败");
-      renderStatus(data); renderQuality(data); renderTargets(data); setDashboardBusy(false);
+      lastSignalData=data; renderStatus(data); renderQuality(data); renderStrategy(data); renderTargets(data); setDashboardBusy(false);
     } catch(error) { setUnavailable(error instanceof Error?error.message:"未知错误"); }
     finally { button.disabled=false; }
   }
-  document.getElementById("runBtn").addEventListener("click",runSignal); runSignal();
+  document.getElementById("runBtn").addEventListener("click",runSignal);
+  const accountEquity=document.getElementById("accountEquity"); accountEquity.addEventListener("input",()=>{if(lastSignalData)renderTargets(lastSignalData)}); runSignal();
 </script>
 </body></html>
 """
