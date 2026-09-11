@@ -88,6 +88,6 @@ Expected: all tests pass outside the filesystem sandbox; the local socket smoke 
 
 Update the verification note with the two-leg rules, Phase-C proxy caveat, 1.125x development status, account sizing behavior, and test evidence. Serve the app and inspect desktop and mobile layouts for clipping and legibility.
 
-- [ ] **Step 4: Commit and publish for review**
+- [x] **Step 4: Commit and publish for review**
 
 Commit the tested implementation on `feat/mvs-dip-portfolio`, push the branch, and create a pull request describing the new selection and sizing behavior plus its development-status limitations.
