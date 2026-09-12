@@ -1,17 +1,17 @@
 {
-  "updated_at": "2026-09-11 07:04 UTC",
+  "updated_at": "2026-09-12 06:56 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
-  "expected_symbols": 503,
-  "symbols": 503,
+  "expected_symbols": 502,
+  "symbols": 502,
   "missing_symbols": [],
-  "rows": 250747,
-  "date_min": "2024-09-11",
-  "date_max": "2026-09-10",
+  "rows": 250250,
+  "date_min": "2024-09-12",
+  "date_max": "2026-09-11",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "09-Sep-2026",
+  "spy_holdings_as_of": "10-Sep-2026",
   "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
     {
@@ -21,11 +21,17 @@
       "reason": "blank_or_cash_ticker"
     },
     {
+      "name": "FALCON TOPCO INC",
+      "ticker": "2682320D",
+      "currency": "USD",
+      "reason": "non_ticker_identifier"
+    },
+    {
       "name": "CONTRA HOLOGIC INCORPO",
       "ticker": "2602335D",
       "currency": "USD",
       "reason": "contra_bookkeeping_row"
     }
   ],
-  "spy_excluded_count": 2
+  "spy_excluded_count": 3
 }
