@@ -68,6 +68,22 @@ def _download_fields(symbols: list[str], *, period: str, interval: str, fields: 
     return result
 
 
+def attach_benchmark_prices(records: list[dict[str, Any]], histories: dict[str, pd.DataFrame]) -> list[dict[str, Any]]:
+    """Join raw 15-minute closes at exact instants; missing bars stay missing."""
+    prices = {}
+    for symbol in ("SPY", "QQQ"):
+        frame = histories.get(symbol)
+        values = {}
+        if frame is not None and "Close" in frame:
+            for stamp, close in frame["Close"].items():
+                stamp = pd.Timestamp(stamp)
+                if stamp.tzinfo is not None and pd.notna(close) and np.isfinite(close) and close > 0:
+                    values[stamp.tz_convert("UTC")] = round(float(close), 3)
+        prices[symbol.lower()] = values
+    return [{**row, **{key: values.get(pd.Timestamp(row["t"]).tz_convert("UTC"))
+                      for key, values in prices.items()}} for row in records]
+
+
 def _issuer_key(symbol: str) -> str:
     return {"GOOG": "GOOGL", "FOX": "FOXA", "NWS": "NWSA"}.get(symbol, symbol)
 
@@ -310,4 +326,10 @@ class SnapshotMarketData:
         breadth["ntss"] = _calc_ntss(vix, breadth.index)
         records = []
         for timestamp, row in breadth.iterrows(): records.append(_record(timestamp, row))
+        # Benchmark outages must not prevent publishing the breadth snapshot.
+        try:
+            benchmarks = _download_fields(["SPY", "QQQ"], period="5d", interval="15m", fields=("Close",))
+        except Exception:
+            benchmarks = {}
+        records = attach_benchmark_prices(records, benchmarks)
         return {"records": records, "daily_close": daily_close_payload(daily_wide_all, len(symbols), ntss=daily_ntss), "n_stocks": len(symbols), "n_valid_15m": len(common), "n_valid_hourly": len(common), **self._universe_meta.get("sp500", {})}

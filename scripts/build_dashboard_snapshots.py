@@ -304,7 +304,12 @@ def merge_breadth_history(
     for source in (existing_records, new_records):
         for original in source:
             copied = deepcopy(original)
-            merged[_aware_record_time(copied)] = copied
+            timestamp = _aware_record_time(copied)
+            previous = merged.get(timestamp, {})
+            for key in ("spy", "qqq"):
+                if copied.get(key) is None and previous.get(key) is not None:
+                    copied[key] = previous[key]
+            merged[timestamp] = copied
     if not merged:
         return []
     latest = max(merged)

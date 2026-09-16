@@ -646,7 +646,8 @@ def test_build_ntss_matches_canonical_90_minute_tolerance():
     assert result.index.equals(target)
 
 
-def test_provider_reuses_sp500_daily_download_for_signals_and_breadth(monkeypatch):
+@pytest.mark.parametrize("benchmark_outage", [False, True])
+def test_provider_reuses_sp500_daily_download_for_signals_and_breadth(monkeypatch, benchmark_outage):
     symbols = [f"S{i:03}" for i in range(100)]
     days = pd.date_range("2025-01-01", periods=201, freq="D")
     bars = pd.DatetimeIndex(["2026-01-01 15:00:00+00:00"])
@@ -654,6 +655,8 @@ def test_provider_reuses_sp500_daily_download_for_signals_and_breadth(monkeypatc
 
     def fake_download(requested, *, period, interval, fields):
         nonlocal daily_calls
+        if requested == ["SPY", "QQQ"] and benchmark_outage:
+            raise RuntimeError("benchmark source unavailable")
         if interval == "1d":
             if requested != ["^VIX", "^VIX3M"]:
                 daily_calls += 1
@@ -669,6 +672,8 @@ def test_provider_reuses_sp500_daily_download_for_signals_and_breadth(monkeypatc
     signals = provider.compute_signals("sp500")
     result = provider.compute_breadth()
 
+    assert result["records"][0]["spy"] == (None if benchmark_outage else 250.0)
+    assert result["records"][0]["qqq"] == (None if benchmark_outage else 250.0)
     assert daily_calls == 1
     assert len(signals["adv_ranked"]) == 15
     assert len(signals["ema200_selected"]) == 3

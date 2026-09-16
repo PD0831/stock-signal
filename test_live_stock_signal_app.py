@@ -435,14 +435,15 @@ def test_breadth_page_is_lightweight_intraday_radar(tmp_path, monkeypatch):
     html = TestClient(_import_app(monkeypatch, tmp_path).app).get("/breadth").text
 
     for element_id in (
-        "breadthDashboard", "breadthPhase", "breadthAction", "breadthFreshness",
+        "breadthDashboard", "priceChart", "breadthAction", "breadthFreshness",
         "breadthTimestamp", "strongValue", "strongDelta", "breakdownValue",
         "breakdownDelta", "ntssValue", "ntssDelta", "intradayChart", "ntssChart",
         "rangeOptions", "coverageLabel", "cursorDetails",
-        "latestTransition", "ma20Value", "ma50Value", "ma200Value",
+        "benchmarkCoverage", "ma20Value", "ma50Value", "ma200Value",
         "momentumValue", "qualityDetails", "seriesSummary",
     ):
         assert f'id="{element_id}"' in html
+    assert "当前阶段" not in html and "最近阶段切换" not in html
     assert "<details" in html and "研究详情" in html
     assert "<svg" in html and "viewBox=" in html
     assert "Plotly" not in html and "plotly" not in html
@@ -484,22 +485,37 @@ const data={generated_at:"2026-07-11T15:20:00Z",stale:false,
   {t:"2026-07-11T15:00:00Z",phase_code:"E",phase_label:"震荡整理",action:"降低仓位",s:43,bd:18,mid:.5,a20:56,a50:51,a200:46,mom:-1,a20_n:491,a50_n:490,a200_n:481}],
  latest_transition:{from:"B",from_label:"强势整固",to:"E",to_label:"震荡整理",at:"2026-07-11T15:00:00Z"}};
 renderBreadth(data);
-if(elements.breadthPhase.textContent!=="E 震荡整理") throw new Error("phase label");
+
 if(elements.breadthAction.textContent!=="降低仓位") throw new Error("producer action");
 if(elements.strongDelta.textContent!=="+3.0% vs 15 分钟前") throw new Error("strong delta "+elements.strongDelta.textContent);
 if(elements.breakdownDelta.textContent!=="−2.0% vs 15 分钟前") throw new Error("breakdown delta");
 if(elements.ntssDelta.textContent!=="−0.50 vs 15 分钟前") throw new Error("ntss delta");
-if(elements.latestTransition.textContent.indexOf("B 强势整固 → E 震荡整理")<0) throw new Error("transition");
+
 if(elements.intradayChart.children.length<4) throw new Error("chart not rendered");
 if(!elements.intradayChart.children.some(x=>x.tag==="title"&&x.textContent.includes("5D"))) throw new Error("svg title");
 if(!elements.intradayChart.children.some(x=>x.tag==="desc"&&x.textContent.includes("实际覆盖"))) throw new Error("svg description");
 if(!elements.ntssChart.children.some(x=>x.tag==="title"&&x.textContent.includes("NTSS"))) throw new Error("ntss title");
 if(!elements.seriesSummary.textContent.includes("共享时间轴")) throw new Error("text summary");
-if(!elements.intradayChart.children.some(x=>x.tag==="text"&&x.textContent==="E 震荡整理")) throw new Error("transition annotation");
+if(elements.intradayChart.children.some(x=>x.tag==="text"&&x.textContent==="E 震荡整理")) throw new Error("unexpected phase annotation");
 if(elements.qualityDetails.textContent.indexOf("有效 498")<0) throw new Error("quality");
 if(elements.breadthDashboard.attrs["aria-busy"]!=="false") throw new Error("busy success");
 if(!elements.ntssChart.children.some(x=>x.tag==="line"&&x.attrs.stroke==="#8b98a9")) throw new Error("ntss zero axis");
 if(!elements.ntssChart.children.some(x=>x.tag==="polyline"&&x.attrs.stroke==="#5ba7ff")) throw new Error("ntss series");
+const comparison=[{t:"2026-09-15T13:30:00Z",s:40,bd:20,mid:1,spy:600,qqq:500},{t:"2026-09-15T13:45:00Z",s:42,bd:19,mid:2,spy:606,qqq:510},{t:"2026-09-15T14:00:00Z",s:43,bd:18,mid:3,spy:null,qqq:515}];
+renderBreadth({...data,records:comparison});
+if(!elements.priceChart.children.some(x=>x.tag==="polyline")) throw new Error("price series missing");
+if(!elements.intradayChart.children.some(x=>x.tag==="text"&&x.textContent.includes("09:30"))) throw new Error("intraday time ticks missing");
+renderCursor(1);
+if(!elements.cursorDetails.textContent.includes("606.00")||!elements.cursorDetails.textContent.includes("2.00%")) throw new Error("price cursor");
+if(!elements.cursorDetails.textContent.includes("09:45")||!elements.cursorDetails.textContent.includes("ET")) throw new Error("Eastern cursor");
+inspectChart({currentTarget:{getBoundingClientRect(){return {left:0,top:0,width:900,height:250}},viewBox:{baseVal:{width:900,height:250}}},clientX:460,clientY:100});
+if(selectedRecordIndex!==1) throw new Error("plot bounds cursor");
+const normalizedPrice=benchmarkSeries(comparison);
+if(Math.abs(normalizedPrice[1].spyReturn-1)>1e-9||normalizedPrice[2].spyReturn!==null) throw new Error("returns or gaps");
+const late=benchmarkSeries([{t:comparison[0].t,spy:600,qqq:null},{t:comparison[1].t,spy:606,qqq:510},{t:comparison[2].t,spy:609,qqq:515}]);
+if(late[0].spyReturn!==null||late[1].spyReturn!==0||late[1].qqqReturn!==0) throw new Error("common baseline");
+renderBreadth(data);
+if(!elements.benchmarkCoverage.textContent.includes("暂无")) throw new Error("old snapshot price absence");
 const many=[];for(let d=1;d<=25;d++){many.push({t:`2026-06-${String(d).padStart(2,"0")}T14:30:00Z`,s:d,bd:100-d,mid:d-13})}
 if(new Set(filterRange(many,"1D").map(x=>dayKey(x.t))).size!==1) throw new Error("1D filter");
 if(new Set(filterRange(many,"5D").map(x=>dayKey(x.t))).size!==5) throw new Error("5D filter");
