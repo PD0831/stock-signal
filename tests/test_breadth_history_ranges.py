@@ -50,3 +50,12 @@ def test_history_is_deep_copied():
     merged = merge_breadth_history([], [source])
     source["s"] = 999
     assert merged[0]["s"] == 1
+
+
+def test_refresh_without_prices_keeps_previous_exact_bar_benchmarks():
+    prior = {**record('2026-09-15T13:30:00Z', 40), 'spy': 600, 'qqq': 500}
+    latest = {**record('2026-09-15T09:30:00-04:00', 42), 'spy': None, 'qqq': 501}
+    merged = merge_breadth_history([prior], [latest])
+    assert merged[0]['s'] == 42
+    assert merged[0]['spy'] == 600
+    assert merged[0]['qqq'] == 501
