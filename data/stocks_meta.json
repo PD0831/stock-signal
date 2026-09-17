@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-09-16 07:20 UTC",
+  "updated_at": "2026-09-17 07:15 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
@@ -7,11 +7,11 @@
   "expected_symbols": 503,
   "symbols": 503,
   "missing_symbols": [],
-  "rows": 250758,
-  "date_min": "2024-09-16",
-  "date_max": "2026-09-15",
+  "rows": 250763,
+  "date_min": "2024-09-17",
+  "date_max": "2026-09-16",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "14-Sep-2026",
+  "spy_holdings_as_of": "15-Sep-2026",
   "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
     {
@@ -21,10 +21,10 @@
       "reason": "blank_or_cash_ticker"
     },
     {
-      "name": "CONTRA HOLOGIC INCORPO",
+      "name": "TPG INC",
       "ticker": "2602335D",
       "currency": "USD",
-      "reason": "contra_bookkeeping_row"
+      "reason": "non_ticker_identifier"
     }
   ],
   "spy_excluded_count": 2
