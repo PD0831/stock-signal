@@ -1,3 +1,12 @@
+_AUTO_REFRESH = r"""function startSnapshotPolling(refresh){
+  if(typeof window==="undefined"||typeof document.addEventListener!=="function")return;
+  let pending=false;
+  async function check(){if(document.hidden||pending)return;pending=true;try{await refresh()}catch(_error){}finally{pending=false}}
+  window.setInterval(check,60000);
+  document.addEventListener("visibilitychange",check);
+}
+"""
+
 _NAV = r"""
 <style>
   .nav-bar { background:#161b22; border-bottom:1px solid #30363d; padding:0 24px; display:flex; gap:0; }
@@ -139,10 +148,10 @@ SIGNALS_HTML = r"""<!doctype html>
 <body>
 <header>
   <div><div class="eyebrow">15 Minute Snapshot</div><h1>Market Vital Sign 决策台</h1></div>
-  <div class="header-actions"><span id="dataTimestamp">数据时间 —</span><button id="runBtn" type="button">刷新快照</button></div>
+  <div class="header-actions"><span id="dataTimestamp">数据时间 —</span><button id="runBtn" type="button">检查更新</button></div>
 </header>
 """ + _NAV + r"""
-<main id="dashboard" aria-busy="false">
+<main id="dashboard" aria-busy="false"><p class="section-sub">每分钟自动检查新快照 · 行情由后台定时下载，非逐笔实时</p>
   <section class="hero" aria-labelledby="currentAction">
     <div class="action-panel" role="status" aria-live="polite"><div class="action-label">当前行动</div><h2 id="currentAction">正在加载</h2>
       <p id="actionBasis">正在读取最新预计算快照。</p></div>
@@ -232,7 +241,7 @@ SIGNALS_HTML = r"""<!doctype html>
   function renderQuality(data){
     const quality=data.quality||{}, badge=document.getElementById("freshnessBadge");
     badge.className="badge "+(data.stale?"stale":"fresh"); badge.textContent=data.stale?"数据已过期":"数据正常";
-    setText("dataTimestamp","数据时间 "+String(data.generated_at||"—").replace("T"," "));
+    setText("dataTimestamp","行情 "+String(data.data_as_of||data.generated_at||"—").replace("T"," "));
     const parts=[]; ["nasdaq100","sp500"].forEach(key=>{ const q=quality[key]; if(!q) return;
       const market=universeName(key); if(finite(q.valid_count)) parts.push(market+" 有效 "+q.valid_count);
       if(finite(q.failed_count)) parts.push(market+" 失败 "+q.failed_count);
@@ -272,14 +281,14 @@ SIGNALS_HTML = r"""<!doctype html>
     setText("qualityDisclosure","正在检查覆盖率与新鲜度。");
     setDashboardBusy(true);
   }
-  async function runSignal(){
-    const button=document.getElementById("runBtn"); button.disabled=true; setLoading();
-    try { const response=await fetch("/api/signals"); const data=await response.json(); if(!response.ok) throw new Error(data.error||"请求失败");
+  async function runSignal(background=false){
+    const button=document.getElementById("runBtn"); if(button.disabled)return;button.disabled=true; if(!background)setLoading();
+    try { const response=await fetch("/api/signals",{cache:"no-store",signal:AbortSignal.timeout(45000)}); const data=await response.json(); if(!response.ok) throw new Error(data.error||"请求失败");
       lastSignalData=data; renderStatus(data); renderQuality(data); renderStrategy(data); renderTargets(data); setDashboardBusy(false);
     } catch(error) { setUnavailable(error instanceof Error?error.message:"未知错误"); }
     finally { button.disabled=false; }
   }
-  document.getElementById("runBtn").addEventListener("click",runSignal);
+  document.getElementById("runBtn").addEventListener("click",()=>runSignal());
   const accountEquity=document.getElementById("accountEquity"); accountEquity.addEventListener("input",()=>{if(lastSignalData)renderTargets(lastSignalData)}); runSignal();
 </script>
 </body></html>
@@ -326,9 +335,9 @@ BREADTH_HTML = r"""<!doctype html>
     @media(max-width:720px){main{width:calc(100% - 24px)}.hero{grid-template-columns:1fr}.hero-side{grid-template-columns:1fr 1fr;gap:10px}.hero-side .sub{grid-column:1/-1}.metrics{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.metric{padding:13px}.value{font-size:24px}.delta{font-size:10px}.panel{padding:14px}.panel-head{flex-direction:column}.chart-stack{gap:18px}.chart-label .sub{display:none}.legend{gap:10px}.range-options{width:auto}.range-bar{gap:10px}#coverageLabel{font-size:10px}}
   </style>
 </head><body>
-<header><div><div class="eyebrow">Market breadth / 15 min</div><h1>15 分钟市场宽度</h1></div><button id="refreshBtn" type="button">刷新快照</button></header>
+<header><div><div class="eyebrow">Market breadth / 15 min</div><h1>15 分钟市场宽度</h1></div><button id="refreshBtn" type="button">检查更新</button></header>
 """ + _NAV + r"""
-<main id="breadthDashboard" aria-busy="true">
+<main id="breadthDashboard" aria-busy="true"><p class="sub">每分钟自动检查新快照 · 行情由后台定时下载，非逐笔实时</p>
   <section class="hero"><div class="hero-main" role="status" aria-live="polite"><div class="label">当前行动</div><h2 id="breadthAction">正在加载</h2><p class="sub" id="latestBar">正在读取预计算快照。</p></div>
     <div class="hero-side">
       <div class="row"><span class="label">NTSS 状态</span><span class="badge" id="ntssStateBadge">—</span></div>
@@ -433,8 +442,8 @@ function renderBreadth(data){lastBreadthData=data;updateRangeButtons();const all
   [["strongValue","strongDelta",cur.s,prev&&prev.s,1,"%"],["breakdownValue","breakdownDelta",cur.bd,prev&&prev.bd,1,"%"],["ntssValue","ntssDelta",cur.mid,prev&&prev.mid,2,""]].forEach(v=>{const out=metric(v[2],v[3],v[4],v[5],elapsed);text(v[0],out[0]);text(v[1],out[1])});
   [["ma20Value",cur.a20,1,"%"],["ma50Value",cur.a50,1,"%"],["ma200Value",cur.a200,1,"%"],["momentumValue",cur.mom,2,""]].forEach(v=>text(v[0],finite(v[1])?(v[2]===2?P2:P1).format(v[1])+v[3]:"—"));
   renderChart(recs);text("qualityDetails",qualityText(data,cur));const b=document.getElementById("breadthFreshness");b.className="badge "+(data.stale?"stale":"fresh");b.textContent=data.stale?"数据已过期":((data.quality||{}).session_status==="closed"?"市场已收盘":"数据正常");b.setAttribute("role","status");busy(false)}
-async function loadBreadth(){const button=document.getElementById("refreshBtn");button.disabled=true;setLoading();try{const response=await fetch("/api/breadth");const data=await response.json();if(!response.ok)throw new Error(data.error||"请求失败");renderBreadth(data)}catch(error){setUnavailable(error instanceof Error?error.message:"未知错误")}finally{button.disabled=false}}
-document.getElementById("refreshBtn").addEventListener("click",loadBreadth);
+async function loadBreadth(background=false){const button=document.getElementById("refreshBtn");if(button.disabled)return;button.disabled=true;if(!background)setLoading();try{const response=await fetch("/api/breadth",{cache:"no-store",signal:AbortSignal.timeout(45000)});const data=await response.json();if(!response.ok)throw new Error(data.error||"请求失败");renderBreadth(data)}catch(error){setUnavailable(error instanceof Error?error.message:"未知错误")}finally{button.disabled=false}}
+document.getElementById("refreshBtn").addEventListener("click",()=>loadBreadth());
 const rangeRoot=document.getElementById("rangeOptions");if(rangeRoot&&rangeRoot.querySelectorAll)rangeRoot.querySelectorAll("button[data-range]").forEach(button=>button.addEventListener("click",()=>setRange(button.getAttribute("data-range"))));
 function inspectChart(event){if(!visibleRecords.length)return;if(event&&event.key){if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;if(event.preventDefault)event.preventDefault();const next=event.key==="Home"?0:event.key==="End"?visibleRecords.length-1:event.key==="ArrowLeft"?Math.max(0,selectedRecordIndex-1):Math.min(visibleRecords.length-1,selectedRecordIndex+1);renderCursor(next);return}const chart=event.currentTarget,box=chart.getBoundingClientRect(),vb=chart.viewBox.baseVal,scale=Math.min(box.width/vb.width,box.height/vb.height),offset=(box.width-vb.width*scale)/2,px=(event.clientX-box.left-offset)/scale,ratio=Math.max(0,Math.min(1,(px-45)/(vb.width-70)));renderCursor(Math.round(ratio*(visibleRecords.length-1)))}
 ["priceChart","intradayChart","ntssChart"].forEach(id=>{const chart=document.getElementById(id);chart.addEventListener("click",inspectChart);chart.addEventListener("pointermove",inspectChart);chart.addEventListener("keydown",inspectChart)});
@@ -442,3 +451,7 @@ if(typeof ResizeObserver!=="undefined"){let resizeFrame;new ResizeObserver(()=>{
 updateRangeButtons();loadBreadth();
 </script></body></html>
 """
+
+# Keep polling in each page's main script, including standalone JS contract tests.
+SIGNALS_HTML = SIGNALS_HTML.replace('  async function runSignal', _AUTO_REFRESH + '  async function runSignal').replace('}); runSignal();', '}); runSignal();startSnapshotPolling(()=>runSignal(true));')
+BREADTH_HTML = BREADTH_HTML.replace('async function loadBreadth', _AUTO_REFRESH + 'async function loadBreadth').replace('updateRangeButtons();loadBreadth();', 'updateRangeButtons();loadBreadth();startSnapshotPolling(()=>loadBreadth(true));')

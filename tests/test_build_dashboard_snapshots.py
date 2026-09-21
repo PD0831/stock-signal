@@ -217,10 +217,10 @@ def test_refresh_workflow_separates_read_only_build_from_write_publish():
     publish = workflow["jobs"]["publish"]
 
     assert workflow["on"]["workflow_dispatch"] is None
-    assert workflow["on"]["schedule"] == [{"cron": "*/15 13-21 * * 1-5"}]
+    assert workflow["on"]["schedule"] == [{"cron": "7,22,37,52 13-23 * * 1-5"}]
     assert workflow["concurrency"] == {
-        "group": "mvs-dashboard-refresh",
-        "cancel-in-progress": True,
+        "group": "mvs-dashboard-refresh-${{ github.ref }}",
+        "cancel-in-progress": False,
     }
     assert build["permissions"] == {"contents": "read"}
     assert publish["permissions"] == {"contents": "write"}
