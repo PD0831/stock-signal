@@ -65,9 +65,9 @@ def test_display_routes_use_snapshots_without_market_dependencies(tmp_path, monk
         breadth_response = client.get("/api/breadth")
 
     assert signal_response.status_code == 200
-    assert signal_response.json() | {"stale": False} == dashboard | {"stale": False}
+    assert signal_response.json() | {"stale": False} == dashboard | {"stale": False, "data_as_of": None}
     assert breadth_response.status_code == 200
-    assert breadth_response.json() | {"stale": False} == breadth | {"stale": False}
+    assert breadth_response.json() | {"stale": False} == breadth | {"stale": False, "data_as_of": None}
 
 
 def test_stale_snapshot_remains_available(tmp_path, monkeypatch):
@@ -560,3 +560,15 @@ if(elements.seriesSummary.textContent.includes("NaN")||elements.seriesSummary.te
 '''
     result = subprocess.run(["node", "-e", harness + script + assertions], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_snapshot_responses_prevent_caching_and_expose_data_age(tmp_path, monkeypatch):
+    dashboard, breadth = _write_pair(tmp_path)
+    breadth['records'] = [{'t': '2026-09-18T19:15:00Z', 's': 40, 'bd': 20}]
+    (tmp_path / 'breadth_15m.json').write_text(json.dumps(breadth))
+    client = TestClient(_import_app(monkeypatch, tmp_path).app)
+    for route in ('/api/signals','/api/breadth'):
+        response=client.get(route)
+        assert response.headers['cache-control']=='no-store'
+        assert response.json()['data_as_of']=='2026-09-18T19:15:00Z'
+        assert response.json()['stale'] is True

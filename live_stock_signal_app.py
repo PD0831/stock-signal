@@ -218,8 +218,15 @@ def _is_stale(payload: dict[str, Any], now: datetime | None = None) -> bool:
 def load_snapshot(name: str) -> dict[str, Any]:
     if name not in _SNAPSHOT_FILES:
         raise SnapshotUnavailable(f"unknown snapshot {name!r}")
-    payload = _snapshot_pair()[name]
+    pair = _snapshot_pair()
+    payload = pair[name]
+    records = pair["breadth"]["records"]
+    payload["data_as_of"] = max((r["t"] for r in records), key=lambda t: datetime.fromisoformat(t.replace("Z", "+00:00")), default=None)
     payload["stale"] = _is_stale(payload)
+    if payload["data_as_of"] and payload["quality"]["session_status"] == "open":
+        generated = datetime.fromisoformat(payload["generated_at"].replace("Z", "+00:00"))
+        source_time = datetime.fromisoformat(payload["data_as_of"].replace("Z", "+00:00"))
+        payload["stale"] = payload["stale"] or generated - source_time > timedelta(minutes=45)
     return payload
 
 
@@ -238,9 +245,9 @@ def breadth_page() -> str:
 
 def _snapshot_response(name: str) -> JSONResponse:
     try:
-        return JSONResponse(load_snapshot(name))
+        return JSONResponse(load_snapshot(name), headers={"Cache-Control": "no-store"})
     except SnapshotUnavailable as exc:
-        return JSONResponse({"available": False, "error": str(exc)}, status_code=503)
+        return JSONResponse({"available": False, "error": str(exc)}, status_code=503, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/signals")
