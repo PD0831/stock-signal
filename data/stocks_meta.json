@@ -1,19 +1,17 @@
 {
-  "updated_at": "2026-09-22 07:24 UTC",
+  "updated_at": "2026-09-23 07:26 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
   "expected_symbols": 503,
-  "symbols": 502,
-  "missing_symbols": [
-    "ARES"
-  ],
-  "rows": 249775,
+  "symbols": 503,
+  "missing_symbols": [],
+  "rows": 250277,
   "date_min": "2024-09-23",
-  "date_max": "2026-09-21",
+  "date_max": "2026-09-22",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "18-Sep-2026",
+  "spy_holdings_as_of": "21-Sep-2026",
   "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
     {
