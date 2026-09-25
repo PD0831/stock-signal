@@ -554,6 +554,21 @@ renderBreadth(mixed);
 if(elements.strongValue.textContent!=="—"||elements.strongDelta.textContent!=="—") throw new Error("incomplete latest card");
 if(!elements.seriesSummary.textContent.includes("共享时间轴")) throw new Error("mixed gap filtering");
 if(elements.seriesSummary.textContent.includes("NaN")||elements.seriesSummary.textContent.includes("Infinity")) throw new Error("unsafe mixed summary");
+const analogData={...data,analogs:{history_start:"2006-12-29",history_end:"2026-09-24",method:"描述性统计",
+ current:{strong:26.8,breakdown:53.7,mid:3.05,qqq_drawdown_pct:-0.3,above_ma200:true,strong_percentile:19.8,breakdown_percentile:89,mid_percentile:81.5},
+ rows:[{label:"基准：全部交易日",condition:"全部",n_days:4904,n_events:null,thin:false,f20_mean:1.3,f60_mean:3.9,f60_median:4.7,f60_neg_pct:26.9,mdd60_median:-3.7,mdd60_le10_pct:18},
+  {label:"宽度相近 + 位置相同",condition:"<b>2%</b>",n_days:2,n_events:2,thin:true,f20_mean:2,f60_mean:2.1,f60_median:2.1,f60_neg_pct:50,mdd60_median:-7.3,mdd60_le10_pct:50,
+   episodes:[{date:"2015-12-09",strong:30.4,breakdown:55.7,mid:2.46,f20:-7.9,f60:-7.7,mdd60:-14.7},{date:"2026-09-21",strong:26,breakdown:49.5,mid:3.42,f20:null,f60:null,mdd60:null}]}],
+ risk_off:{zone:true,breakdown_gt_50:true,breakdown_gt_strong:true,net_momentum:-2.58,momentum_trigger:-5,history_waiting_days:457,triggered_within_5d_pct:54,triggered_within_10d_pct:76.4,triggered_within_20d_pct:86.7}}};
+renderBreadth(analogData);
+if(elements.analogRows.children.length!==3) throw new Error("analog rows "+elements.analogRows.children.length);
+if(elements.analogSummary.children.length!==4) throw new Error("analog summary tiles");
+const thinRow=elements.analogRows.children[1];if(thinRow.className!=="thin"||!thinRow.children[0].children.some(x=>x.textContent==="样本不足")) throw new Error("thin flag");
+if(thinRow.children[0].children.some(x=>x.tag==="b")) throw new Error("condition must stay text");
+if(!elements.analogRows.children[2].children[0].textContent.includes("进行中")) throw new Error("open episode");
+if(elements.riskOffBox.hidden||!elements.riskOffBox.textContent.includes("-2.58")&&!elements.riskOffBox.textContent.includes("−2.58")) throw new Error("risk off box "+elements.riskOffBox.textContent);
+renderBreadth(data);
+if(elements.analogRows.children.length!==1||!elements.riskOffBox.hidden) throw new Error("missing analogs state");
 renderBreadth({...data,records:[{...data.records[2],s:null,bd:null}],latest_transition:null});
 if(elements.chartEmpty.hidden!==false||!elements.chartEmpty.textContent.includes("不足")) throw new Error("all missing state");
 if(elements.seriesSummary.textContent.includes("NaN")||elements.seriesSummary.textContent.includes("Infinity")) throw new Error("unsafe missing summary");

@@ -564,6 +564,21 @@ def _market_status(record: Mapping[str, Any] | None) -> dict[str, Any]:
     return status
 
 
+def _breadth_analogs(
+    data_dir: Path, daily_close: Mapping[str, Any] | None, latest: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """Historical context table; optional, so a failure never blocks a refresh."""
+    try:
+        try:
+            from scripts.breadth_analogs import build_analogs
+        except ModuleNotFoundError:
+            from breadth_analogs import build_analogs
+        return build_analogs(data_dir, daily_close, latest)
+    except Exception as exc:  # noqa: BLE001 - descriptive add-on only
+        print(f"breadth analogs unavailable: {exc!r}")
+        return None
+
+
 def run(
     output_dir: str | os.PathLike[str],
     *,
@@ -626,6 +641,7 @@ def run(
     )
     if raw_breadth.get("daily_close") is not None:
         breadth["daily_close"] = raw_breadth["daily_close"]
+    breadth["analogs"] = _breadth_analogs(output_path, breadth.get("daily_close"), latest)
     generation_id = f"{generated_at.isoformat()}-{uuid.uuid4().hex[:12]}"
     dashboard["generation_id"] = generation_id
     breadth["generation_id"] = generation_id

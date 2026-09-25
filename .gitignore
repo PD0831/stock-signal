@@ -9,4 +9,5 @@ __pycache__/
 !/data/dashboard_snapshot.json
 !/data/breadth_15m.json
 !/data/mvs_position_state.json
+!/data/breadth_history_daily.csv
 .worktrees/
