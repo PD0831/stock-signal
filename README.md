@@ -34,7 +34,7 @@ Content-Type: application/json
 {"ref":"main"}
 ```
 
-令牌只需该仓库的 Actions 写权限，不要放在网页、README 或 Git 中。外部定时器应按交易时段调度，因为 `workflow_dispatch` 有意绕过日历门禁，便于人工恢复。**本仓库并未替你开通外部定时服务。** 若需要可靠的低延迟，应使用常驻生产进程或专用调度服务，不能仅依靠 GitHub cron + Render 免费服务。
+令牌只需该仓库的 Actions 写权限，不要放在网页、README 或 Git 中。外部触发不带参数时同样受 NYSE 日历门禁约束（休市、盘前盘后直接跳过），所以定时器可以全天每 15 分钟调用。人工恢复时在 Actions 页面手动运行并勾选 `force`，才会绕过门禁。当前使用 cron-job.org 触发。 若需要可靠的低延迟，应使用常驻生产进程或专用调度服务，不能仅依靠 GitHub cron + Render 免费服务。
 
 ## 本地运行
 

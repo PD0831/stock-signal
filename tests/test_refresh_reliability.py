@@ -44,3 +44,25 @@ def test_forming_last_bar_does_not_suppress_close_refresh(tmp_path):
     path=tmp_path / 'breadth_15m.json'
     path.write_text(json.dumps({'generated_at':'2026-09-18T19:52:00Z','records':[{'t':'2026-09-18T19:45:00Z'}]}))
     assert hours.should_refresh(datetime.fromisoformat('2026-09-18T20:07:00+00:00'),snapshot_path=path)
+
+
+def _gate_output(monkeypatch, tmp_path, force):
+    out = tmp_path / f'out-{force}.txt'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(out))
+    if force is None:
+        monkeypatch.delenv('FORCE_REFRESH', raising=False)
+    else:
+        monkeypatch.setenv('FORCE_REFRESH', force)
+    monkeypatch.setattr(hours, 'should_refresh', lambda at: False)
+    hours.main()
+    return out.read_text()
+
+
+def test_dispatch_without_force_stays_calendar_gated(monkeypatch, tmp_path):
+    assert _gate_output(monkeypatch, tmp_path, None) == 'should_run=false\n'
+    assert _gate_output(monkeypatch, tmp_path, '') == 'should_run=false\n'
+    assert _gate_output(monkeypatch, tmp_path, 'false') == 'should_run=false\n'
+
+
+def test_forced_dispatch_bypasses_calendar_gate(monkeypatch, tmp_path):
+    assert _gate_output(monkeypatch, tmp_path, 'true') == 'should_run=true\n'

@@ -50,8 +50,10 @@ def should_refresh(at: datetime, *, snapshot_path: Path = Path("data/breadth_15m
 
 
 def main() -> None:
-    manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-    should_run = manual or should_refresh(datetime.now(timezone.utc))
+    # External schedulers dispatch without inputs and stay calendar-gated;
+    # only an explicit force=true (manual recovery) bypasses the gate.
+    forced = os.environ.get("FORCE_REFRESH", "").strip().lower() == "true"
+    should_run = forced or should_refresh(datetime.now(timezone.utc))
     output_path = os.environ.get("GITHUB_OUTPUT")
     line = f"should_run={str(should_run).lower()}\n"
     if output_path:

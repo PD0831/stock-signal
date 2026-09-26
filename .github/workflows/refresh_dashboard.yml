@@ -2,6 +2,11 @@ name: Refresh MVS dashboard snapshots
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Ignore the NYSE calendar gate (manual recovery only)'
+        type: boolean
+        default: false
   schedule:
     # Broad UTC window; the XNYS calendar gate handles DST, holidays and early closes.
     - cron: '7,22,37,52 13-23 * * 1-5'
@@ -35,7 +40,7 @@ jobs:
       - name: Check NYSE market hours
         id: market-hours
         env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          FORCE_REFRESH: ${{ inputs.force }}
         run: python scripts/nyse_market_hours.py
 
       - name: Build snapshots
