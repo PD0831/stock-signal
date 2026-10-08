@@ -1007,10 +1007,10 @@ class FakeProvider:
         ("B", "强势整固", 45.0, 20.0, -1.0, "long", "多头窗口", "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"),
         # Numeric long precedence wins even if an inconsistent phase says G.
         ("G", "宽度承压", 15.0, 30.0, -1.0, "long", "多头窗口", "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"),
-        ("G", "宽度承压", 15.0, 55.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),
-        ("H", "恐慌出清", 10.0, 60.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),
+        ("G", "宽度承压", 15.0, 55.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"),
+        ("H", "恐慌出清", 10.0, 60.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"),
         # Negative NTSS takes precedence over the breakdown watch threshold.
-        ("E", "震荡整理", 25.0, 40.0, -0.1, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"),
+        ("E", "震荡整理", 25.0, 40.0, -0.1, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"),
         ("E", "震荡整理", 25.0, 40.0, 1.0, "short_watch", "空头雷达", "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"),
         ("D", "修复中", 30.0, None, 1.0, "watch", "观察", "等待 MVS 多头或 Gap Short 触发。"),
     ],

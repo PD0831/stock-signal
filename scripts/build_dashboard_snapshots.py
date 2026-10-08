@@ -521,7 +521,7 @@ def _market_status(record: Mapping[str, Any] | None) -> dict[str, Any]:
             action = "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"
     elif (ntss is not None and ntss < 0) or phase_code in {"G", "H"}:
         signal, short_type, label = "short", "Risk Off", "空头保险"
-        action = "Risk Off 环境：若处于空仓期并满足 Gap Short，执行 QQQ/SPY 70% + 弱股 30%。"
+        action = "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"
     elif breakdown is not None and breakdown >= 35:
         signal, short_type, label = "short_watch", "Trail Exhaustion", "空头雷达"
         action = "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"
