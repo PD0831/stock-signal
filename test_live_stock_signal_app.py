@@ -377,11 +377,11 @@ def test_builder_market_status_contract_is_consumed_by_homepage(tmp_path, monkey
         "action": "Phase C 牛市回调：使用 ADV Top3 流动性腿 + ADV Top10 等权 Dip 代理腿。",
         "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic",
         "as_of": now.isoformat(), "strong": 57.5, "breakdown": 13.5,
-        "ntss": 1.25, "momentum": 4.5,
+        "ntss": 1.25, "momentum": 4.5, "net_momentum_pine": None,
     }
     html = client.get("/").text
 
-    for contract_value in ("strong", "breakdown", "ntss", "momentum", "action", "distance_pct"):
+    for contract_value in ("strong", "breakdown", "ntss", "net_momentum_pine", "action", "distance_pct"):
         assert f'status.{contract_value}' in html or f'target.{contract_value}' in html
 
 

@@ -163,7 +163,7 @@ SIGNALS_HTML = r"""<!doctype html>
     <article class="metric"><div class="metric-label">Strong</div><div class="metric-value positive" id="strongValue">—</div><div class="metric-note">强势股占比</div></article>
     <article class="metric"><div class="metric-label">Breakdown</div><div class="metric-value negative" id="breakdownValue">—</div><div class="metric-note">破位股占比</div></article>
     <article class="metric"><div class="metric-label">NTSS</div><div class="metric-value" id="ntssValue">—</div><div class="metric-note" id="ntssState">市场中轴</div></article>
-    <article class="metric"><div class="metric-label">Momentum</div><div class="metric-value" id="momentumValue">—</div><div class="metric-note">净动量</div></article>
+    <article class="metric"><div class="metric-label">Momentum</div><div class="metric-value" id="momentumValue">—</div><div class="metric-note">净动量（Pine，对昨收）</div></article>
   </section>
   <section class="section" aria-labelledby="targetsTitle">
     <div class="section-head"><div><h2 id="targetsTitle">MVS 目标组合</h2><div class="section-sub">NASDAQ 100 · 两腿合并后的账户级买入清单</div></div>
@@ -226,7 +226,7 @@ SIGNALS_HTML = r"""<!doctype html>
     const strong=finite(status.strong)?status.strong:valueFrom(status,["s"]);
     const breakdown=finite(status.breakdown)?status.breakdown:valueFrom(status,["bd"]);
     const ntss=finite(status.ntss)?status.ntss:valueFrom(status,["mid"]);
-    const momentum=finite(status.momentum)?status.momentum:valueFrom(status,["mom"]);
+    const momentum=finite(status.net_momentum_pine)?status.net_momentum_pine:null;
     setText("marketPhase",phase==="—"?"—":phase+" "+(status.phase||"")); setText("phaseBadge",status.label||"未知");
     setText("strongValue",strong===null?"—":F1.format(strong)+"%"); setText("breakdownValue",breakdown===null?"—":F1.format(breakdown)+"%");
     setText("ntssValue",ntss===null?"—":F2.format(ntss)); setText("momentumValue",momentum===null?"—":F2.format(momentum));
@@ -366,7 +366,7 @@ BREADTH_HTML = r"""<!doctype html>
     <p class="sub" id="analogMethod" style="margin-top:12px"></p></section>
   <details><summary>研究详情</summary><div class="research">
     <div><div class="label">MA20 宽度</div><div class="value" id="ma20Value">—</div></div><div><div class="label">MA50 宽度</div><div class="value" id="ma50Value">—</div></div>
-    <div><div class="label">MA200 宽度</div><div class="value" id="ma200Value">—</div></div><div><div class="label">Momentum</div><div class="value" id="momentumValue">—</div></div></div>
+    <div><div class="label">MA200 宽度</div><div class="value" id="ma200Value">—</div></div><div><div class="label">净动量（Pine，对昨收）</div><div class="value" id="momentumValue">—</div></div></div>
     <p id="qualityDetails">正在检查覆盖率和有效成分股数。</p><p id="seriesSummary" class="visually-hidden">今日轨迹尚未载入。</p></details>
 </main>
 <script>
@@ -392,7 +392,7 @@ function updateRangeButtons(){const root=document.getElementById("rangeOptions")
 function setRange(range){activeRange=VALID_RANGES.has(range)?range:"5D";try{localStorage.setItem("mvsBreadthRange",activeRange)}catch(_error){}updateRangeButtons();if(lastBreadthData)renderBreadth(lastBreadthData)}
 function seriesSegments(records,key,x,y){const groups=[];let current=[];records.forEach((record,index)=>{if(finite(record[key]))current.push(x(index)+","+y(record[key]));else if(current.length){groups.push(current);current=[]}});if(current.length)groups.push(current);return groups}
 function appendSeries(chart,records,key,color,x,y){seriesSegments(records,key,x,y).forEach(points=>{if(points.length>=2)chart.appendChild(svg("polyline",{points:points.join(" "),fill:"none",stroke:color,"stroke-width":3,"stroke-linejoin":"round"}))})}
-let chartWidth=900;
+let chartWidth=900,chartScales={};
 const ET_DATE=new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit"});
 const ET_TIME=new Intl.DateTimeFormat("en-GB",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 function timeLabel(t){const d=new Date(t);return ET_DATE.format(d)+" "+ET_TIME.format(d)+" ET"}
@@ -413,7 +413,18 @@ function titleChart(chart,id,title,description){const t=svg("title",{id:id+"Titl
 function renderCursor(index){
   if(!visibleRecords.length)return;selectedRecordIndex=Math.max(0,Math.min(index,visibleRecords.length-1));
   const record=visibleRecords[selectedRecordIndex],x=45+(chartWidth-70)*(visibleRecords.length===1?0:selectedRecordIndex/(visibleRecords.length-1));
-  [["priceChart",185],["intradayChart",220],["ntssChart",155]].forEach(([id,bottom])=>{const chart=document.getElementById(id);if(chart.querySelectorAll)chart.querySelectorAll('[data-cursor="true"]').forEach(node=>node.remove());chart.appendChild(svg("line",{x1:x,y1:12,x2:x,y2:bottom,stroke:"#8b98a9","stroke-dasharray":"2 3","data-cursor":"true"}))});
+  const signedPct=v=>finite(v)?(v>0?"+":"")+P2.format(v)+"%":"—",pct=v=>finite(v)?P1.format(v)+"%":"—";
+  const tipSeries={priceChart:[["spyReturn","#b5a1f5","SPY",v=>signedPct(v)],["qqqReturn","#f2c47b","QQQ",v=>signedPct(v)]],
+    intradayChart:[["s","#41d17d","Strong",pct],["bd","#ff6574","Breakdown",pct]],ntssChart:[["mid","#5ba7ff","NTSS",v=>finite(v)?P2.format(v):"—"]]};
+  const shortTime=ET_DATE.format(new Date(record.t)).slice(5)+" "+ET_TIME.format(new Date(record.t));
+  [["priceChart",185],["intradayChart",220],["ntssChart",155]].forEach(([id,bottom])=>{const chart=document.getElementById(id);if(chart.querySelectorAll)chart.querySelectorAll('[data-cursor="true"]').forEach(node=>node.remove());chart.appendChild(svg("line",{x1:x,y1:12,x2:x,y2:bottom,stroke:"#8b98a9","stroke-dasharray":"2 3","data-cursor":"true"}));
+    const scale=chartScales[id],series=tipSeries[id];if(!scale)return;
+    series.forEach(([key,color])=>{if(finite(record[key]))chart.appendChild(svg("circle",{cx:x,cy:scale(record[key]),r:4,fill:color,stroke:"#0b1118","stroke-width":2,"data-cursor":"true"}))});
+    const lines=[shortTime+" ET",...series.map(([key,,label,fmt])=>label+" "+fmt(record[key]))];
+    if(id==="priceChart")lines.splice(1,2,...[["spy","SPY"],["qqq","QQQ"]].map(([k,label])=>label+" "+(finite(record[k])&&record[k]>0?"$"+P2.format(record[k]):"—")+" · "+signedPct(record[k+"Return"])));
+    const boxW=Math.max(...lines.map(l=>l.length))*6.6+16,boxH=lines.length*15+10,flip=x+12+boxW>chartWidth-5,bx=flip?x-12-boxW:x+12,by=14;
+    const g=svg("g",{"data-cursor":"true","pointer-events":"none"});g.appendChild(svg("rect",{x:bx,y:by,width:boxW,height:boxH,rx:6,fill:"#0b1118",opacity:.92,stroke:"#334255"}));
+    lines.forEach((line,i)=>{const t=svg("text",{x:bx+8,y:by+17+i*15,fill:i===0?"#8b98a9":(series[i-1]||[])[1]||"#c8d3df","font-size":11.5,"font-weight":i===0?400:700});t.textContent=line;g.appendChild(t)});chart.appendChild(g)});
   const price=key=>{const value=record[key+"Return"];return key.toUpperCase()+" "+(finite(record[key])&&record[key]>0?"$"+P2.format(record[key]):"—")+" / "+(finite(value)?(value>0?"+":"")+P2.format(value)+"%":"—")};
   text("cursorDetails",timeLabel(record.t)+" · "+price("spy")+" · "+price("qqq")+" · Strong "+(finite(record.s)?P1.format(record.s)+"%":"—")+" · Breakdown "+(finite(record.bd)?P1.format(record.bd)+"%":"—")+" · NTSS "+(finite(record.mid)?P2.format(record.mid):"—"));
 }
@@ -426,20 +437,20 @@ function renderChart(records){
   text("benchmarkCoverage",base?"基准 "+timeLabel(base.t)+" · 15 分钟收盘价 · "+(!hasSpy?"SPY 暂无数据 · ":!hasQqq?"QQQ 暂无数据 · ":"")+"缺失区间留空":"暂无可对齐的 SPY / QQQ 行情，等待含指数价格的新快照。");
   empty.hidden=recs.filter(r=>finite(r.s)||finite(r.bd)).length>=2||ntssValues.length>=2||prices.length>=2;
   if(recs.length<2){empty.hidden=false;empty.textContent="所选范围有效记录不足。";text("seriesSummary",empty.textContent);return}
-  const left=45,right=chartWidth-25,x=i=>left+(right-left)*i/(recs.length-1),top=18,bottom=220,y=v=>bottom-(bottom-top)*Math.max(0,Math.min(100,v))/100;
+  const left=45,right=chartWidth-25,x=i=>left+(right-left)*i/(recs.length-1),top=18,bottom=220,y=v=>bottom-(bottom-top)*Math.max(0,Math.min(100,v))/100;chartScales.intradayChart=y;
   titleChart(chart,"chart","Strong 与 Breakdown · "+activeRange,"所选范围 "+coverage(recs)+"。时间为美东时间 ET。");
   [0,25,50,75,100].forEach(v=>{chart.appendChild(svg("line",{x1:left,y1:y(v),x2:right,y2:y(v),stroke:"#263140"}));chartText(chart,v+"%",8,y(v)+4)});
   axisTicks(chart,recs,220);appendSeries(chart,recs,"s","#41d17d",x,y);appendSeries(chart,recs,"bd","#ff6574",x,y);
   titleChart(ntssChart,"ntssChart","NTSS · "+activeRange,"NTSS 独立刻度，零轴参考。美东时间 ET。");
   let min=Math.min(0,...ntssValues),max=Math.max(0,...ntssValues);if(min===max){min-=1;max+=1}const pad=Math.max((max-min)*.1,.25);min-=pad;max+=pad;
-  const ny=v=>155-140*(v-min)/(max-min),zero=ny(0);
+  const ny=v=>155-140*(v-min)/(max-min),zero=ny(0);chartScales.ntssChart=ny;
   ntssChart.appendChild(svg("rect",{x:left,y:15,width:right-left,height:Math.max(0,zero-15),fill:"#10291d",opacity:.35}));
   ntssChart.appendChild(svg("rect",{x:left,y:zero,width:right-left,height:Math.max(0,155-zero),fill:"#2a1218",opacity:.35}));
   ntssChart.appendChild(svg("line",{x1:left,y1:zero,x2:right,y2:zero,stroke:"#8b98a9","stroke-width":1.5}));
   [max,0,min].forEach(v=>chartText(ntssChart,P2.format(v),8,ny(v)+4));axisTicks(ntssChart,recs,155);appendSeries(ntssChart,recs,"mid","#5ba7ff",x,ny);
   titleChart(priceChart,"priceChart","SPY / QQQ · "+activeRange,"相同起点的区间价格变化，不含分红。"+document.getElementById("benchmarkCoverage").textContent);
   let pmin=Math.min(0,...prices),pmax=Math.max(0,...prices);const ppad=Math.max((pmax-pmin)*.15,.1);pmin-=ppad;pmax+=ppad;
-  const py=v=>185-167*(v-pmin)/(pmax-pmin);
+  const py=v=>185-167*(v-pmin)/(pmax-pmin);chartScales.priceChart=py;
   [pmax,0,pmin].forEach(v=>{priceChart.appendChild(svg("line",{x1:left,y1:py(v),x2:right,y2:py(v),stroke:v===0?"#576779":"#263140","stroke-dasharray":v===0?"4 4":"none"}));chartText(priceChart,P1.format(v)+"%",3,py(v)+4)});
   axisTicks(priceChart,recs,185);appendSeries(priceChart,recs,"spyReturn","#b5a1f5",x,py);appendSeries(priceChart,recs,"qqqReturn","#f2c47b",x,py);
   if(!prices.length)chartText(priceChart,"暂无指数行情",chartWidth/2,100,"middle");
@@ -468,7 +479,7 @@ function renderAnalogs(a){const rows=document.getElementById("analogRows"),summa
 function qualityText(data,cur){const q=data.quality||{},parts=[];if(finite(q.valid_count))parts.push("有效 "+q.valid_count);if(finite(q.failed_count))parts.push("失败 "+q.failed_count);[["MA20","a20_n", "valid_20_n"],["MA50","a50_n","valid_50_n"],["MA200","a200_n","valid_200_n"]].forEach(([name,a,b])=>{const n=finite(cur[a])?cur[a]:cur[b];if(finite(n))parts.push(name+" 有效 "+n)});if(q.session_status)parts.push(q.session_status==="open"?"交易时段":"市场已收盘");if(data.stale)parts.push("继续展示上次成功快照");return parts.length?parts.join(" · "):"覆盖率未提供。"}
 function renderBreadth(data){lastBreadthData=data;updateRangeButtons();const all=normalizeRecords(data.records),recs=filterRange(all,activeRange);if(!recs.length){setUnavailable("暂无可用记录");return}text("coverageLabel",coverage(recs));const cur=recs[recs.length-1],complete=recs.filter(r=>finite(r.s)&&finite(r.bd)),curComplete=finite(cur.s)&&finite(cur.bd),prev=curComplete?complete[complete.length-2]||null:null,elapsed=prev?(cur._ms-prev._ms)/60000:null;const midVal=finite(cur.mid)?cur.mid:null;const nsb=document.getElementById("ntssStateBadge");if(midVal===null){nsb.textContent="—";nsb.className="badge"}else if(midVal<0){nsb.textContent="PANIC";nsb.className="badge panic"}else if(midVal<2){nsb.textContent="CAUTION";nsb.className="badge caution"}else{nsb.textContent="SAFE";nsb.className="badge safe"}text("breadthAction",cur.action||cur.action_label||"等待生产端发布行动建议。");text("latestBar","最新记录 "+timeLabel(cur.t));text("breadthTimestamp","数据时间 "+(Number.isFinite(Date.parse(data.generated_at))?timeLabel(data.generated_at):"—"));
   [["strongValue","strongDelta",cur.s,prev&&prev.s,1,"%"],["breakdownValue","breakdownDelta",cur.bd,prev&&prev.bd,1,"%"],["ntssValue","ntssDelta",cur.mid,prev&&prev.mid,2,""]].forEach(v=>{const out=metric(v[2],v[3],v[4],v[5],elapsed);text(v[0],out[0]);text(v[1],out[1])});
-  [["ma20Value",cur.a20,1,"%"],["ma50Value",cur.a50,1,"%"],["ma200Value",cur.a200,1,"%"],["momentumValue",cur.mom,2,""]].forEach(v=>text(v[0],finite(v[1])?(v[2]===2?P2:P1).format(v[1])+v[3]:"—"));
+  [["ma20Value",cur.a20,1,"%"],["ma50Value",cur.a50,1,"%"],["ma200Value",cur.a200,1,"%"],["momentumValue",cur.nm,2,""]].forEach(v=>text(v[0],finite(v[1])?(v[2]===2?P2:P1).format(v[1])+v[3]:"—"));
   renderChart(recs);renderAnalogs(data.analogs);text("qualityDetails",qualityText(data,cur));const b=document.getElementById("breadthFreshness");b.className="badge "+(data.stale?"stale":"fresh");b.textContent=data.stale?"数据已过期":((data.quality||{}).session_status==="closed"?"市场已收盘":"数据正常");b.setAttribute("role","status");busy(false)}
 async function loadBreadth(background=false){const button=document.getElementById("refreshBtn");if(button.disabled)return;button.disabled=true;if(!background)setLoading();try{const response=await fetch("/api/breadth",{cache:"no-store",signal:AbortSignal.timeout(45000)});const data=await response.json();if(!response.ok)throw new Error(data.error||"请求失败");renderBreadth(data)}catch(error){setUnavailable(error instanceof Error?error.message:"未知错误")}finally{button.disabled=false}}
 document.getElementById("refreshBtn").addEventListener("click",()=>loadBreadth());

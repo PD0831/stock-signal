@@ -864,7 +864,7 @@ def test_real_breadth_rows_publish_authoritative_transition_labels_and_actions()
 
     assert snapshot["records"][0] | {"t": "ignored", "s": 0, "bd": 0, "mid": 0} == {
         "t": "ignored", "phase_code": "B", "s": 0, "bd": 0, "mid": 0,
-        "phase_label": "强势整固", "signal": "long", "short_type": None,
+        "phase_label": "强势整固", "signal": "long", "short_type": None, "nm": None,
         "action": "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。",
     }
     assert snapshot["records"][1]["action"] == "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"
@@ -1007,10 +1007,9 @@ class FakeProvider:
         ("B", "强势整固", 45.0, 20.0, -1.0, "long", "多头窗口", "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"),
         # Numeric long precedence wins even if an inconsistent phase says G.
         ("G", "宽度承压", 15.0, 30.0, -1.0, "long", "多头窗口", "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"),
-        ("G", "宽度承压", 15.0, 55.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"),
-        ("H", "恐慌出清", 10.0, 60.0, 1.0, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"),
-        # Negative NTSS takes precedence over the breakdown watch threshold.
-        ("E", "震荡整理", 25.0, 40.0, -0.1, "short", "空头保险", "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"),
+        # Phase G/H and negative NTSS alone no longer imply Pine Risk Off.
+        ("H", "恐慌出清", 10.0, 60.0, -1.0, "short_watch", "Risk Off 待触发", "Risk Off 待触发：Breakdown > 50 且 > Strong，净动量 — 需 ≤ -5（Pine 口径，对前一日收盘，以收盘为准）。"),
+        ("E", "震荡整理", 25.0, 40.0, -0.1, "short_watch", "空头雷达", "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"),
         ("E", "震荡整理", 25.0, 40.0, 1.0, "short_watch", "空头雷达", "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"),
         ("D", "修复中", 30.0, None, 1.0, "watch", "观察", "等待 MVS 多头或 Gap Short 触发。"),
     ],
@@ -1028,8 +1027,58 @@ def test_market_status_uses_established_phase_and_numeric_signal_precedence(
     assert status["label"] == label
     assert status["action"] == action
     assert status["short_type"] == {
-        "short": "Risk Off", "short_watch": "Trail Exhaustion",
+        "short": "Risk Off",
+        "short_watch": "Risk Off Pending" if label == "Risk Off 待触发" else "Trail Exhaustion",
     }.get(signal)
+
+
+def _breadth_row(a20, a50, a200, **extra):
+    return {"t": "2026-10-08T18:00:00+00:00", "a20": a20, "a50": a50, "a200": a200,
+            "s": min(a20, a50, a200), "bd": 100 - max(a20, a50, a200), "mid": 2.4, **extra}
+
+
+def test_market_status_risk_off_requires_pine_net_momentum_trigger():
+    previous = _breadth_row(45.0, 35.0, 46.0)   # strong 35, breakdown 54
+    current = _breadth_row(40.0, 30.0, 45.0)    # strong 30, breakdown 55
+    # (Δstrong⁺ + Δrecovery⁺) − (Δpullback⁺ + Δbreakdown⁺) = 0 − (4 + 1) = −5 (boundary fires)
+    status = _market_status(current, previous)
+
+    assert status["net_momentum_pine"] == -5.0
+    assert status["signal"] == "short"
+    assert status["short_type"] == "Risk Off"
+    assert status["action"] == "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"
+
+
+def test_market_status_risk_off_zone_without_momentum_is_pending():
+    previous = _breadth_row(37.6, 28.6, 44.9)
+    current = _breadth_row(46.6, 30.7, 45.8)  # 2026-10-08: breadth zone, momentum positive
+    status = _market_status(current, previous)
+
+    assert status["net_momentum_pine"] > 0
+    assert status["signal"] == "short_watch"
+    assert status["short_type"] == "Risk Off Pending"
+    assert "需 ≤ -5" in status["action"]
+
+
+def test_market_status_never_assumes_risk_off_without_previous_close():
+    status = _market_status(_breadth_row(40.0, 30.0, 45.0, phase_code="H"))
+
+    assert status["net_momentum_pine"] is None
+    assert status["signal"] == "short_watch"
+    assert status["short_type"] == "Risk Off Pending"
+
+
+def test_breadth_snapshot_uses_previous_session_close_for_each_record():
+    records = [
+        _breadth_row(45.0, 35.0, 46.0, t="2026-10-07T19:45:00+00:00"),
+        _breadth_row(40.0, 30.0, 45.0, t="2026-10-08T13:45:00+00:00"),
+        _breadth_row(46.0, 35.0, 46.0, t="2026-10-08T18:00:00+00:00"),
+    ]
+    out = build_breadth_snapshot(records)["records"]
+
+    assert out[0]["short_type"] == "Risk Off Pending"   # no prior session in window
+    assert out[1]["short_type"] == "Risk Off"           # −5 vs 10-07 close
+    assert out[2]["short_type"] == "Risk Off Pending"   # recovered intraday
 
 
 @pytest.mark.parametrize("code,name", [
@@ -1076,6 +1125,7 @@ def test_run_uses_open_trade_ledger_and_monthly_selection_cutoff(tmp_path):
         "breakdown": 22.0,
         "ntss": 1.25,
         "momentum": 4.5,
+        "net_momentum_pine": None,
         "phase": "强势整固",
         "signal": "long",
         "label": "多头窗口",
@@ -1111,6 +1161,7 @@ def test_run_uses_open_trade_ledger_and_monthly_selection_cutoff(tmp_path):
             "mid": 1.25,
             "mom": 4.5,
             "phase_code": "B",
+            "nm": None,
             "phase_label": "强势整固",
             "action": "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。",
             "signal": "long",

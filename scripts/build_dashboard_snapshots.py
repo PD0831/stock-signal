@@ -12,6 +12,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol
+from zoneinfo import ZoneInfo
 
 
 SCHEMA_VERSION = 1
@@ -26,6 +27,11 @@ PROVENANCE = {
     "price_adjustment": "unadjusted",
     "intervals": {"signals": "1d/2y", "breadth": "15m/5d + 1d/2y"},
 }
+MARKET_TZ = ZoneInfo("America/New_York")
+# Pine strategy: risk_off = breakdown > strong and breakdown > breankdown_limit2
+# and net_momentum <= short_trigger (pure breadth, no VIX/NTSS condition).
+RISK_OFF_BREAKDOWN = 50.0
+RISK_OFF_MOMENTUM = -5.0
 
 
 def snapshot_session_metadata(
@@ -350,13 +356,16 @@ def build_breadth_snapshot(
 ) -> dict[str, Any]:
     """Return breadth records plus the most recent adjacent phase change."""
     record_list = deepcopy(list(records))
+    previous_closes = _previous_session_closes(record_list)
     for record in record_list:
         # Real aggregate rows carry numeric breadth fields.  Project the same
         # authoritative phase/action contract used by the homepage so clients
         # never need to duplicate trading semantics.
         if any(key in record for key in ("s", "bd", "mid", "mom")):
-            status = _market_status(record)
+            previous_close = previous_closes.get(id(record))
+            status = _market_status(record, previous_close)
             record.update({
+                "nm": status.get("net_momentum_pine"),
                 "phase_label": status.get("phase"),
                 "action": status.get("action"),
                 "signal": status.get("signal"),
@@ -500,8 +509,66 @@ def _quality(signals: Mapping[str, Any]) -> dict[str, Any]:
     return quality
 
 
-def _market_status(record: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Project the latest breadth row into the dashboard's stable UI contract."""
+def _pine_components(record: Mapping[str, Any] | None) -> dict[str, float] | None:
+    """Strong / Pullback / Recovery / Breakdown exactly as the Pine strategy defines them."""
+    if record is None:
+        return None
+    try:
+        a20, a50, a200 = (float(record[key]) for key in ("a20", "a50", "a200"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {
+        "strong": min(a20, a50, a200),
+        "pullback": max(0.0, a200 - a50),
+        "recovery": max(0.0, a20 - a50),
+        "breakdown": 100.0 - max(a20, a50, a200),
+    }
+
+
+def _pine_net_momentum(
+    record: Mapping[str, Any], previous_close: Mapping[str, Any] | None
+) -> float | None:
+    """Pine net momentum versus the previous session close (positive increments only)."""
+    current, previous = _pine_components(record), _pine_components(previous_close)
+    if current is None or previous is None:
+        return None
+    up = lambda key: max(0.0, current[key] - previous[key])
+    return (up("strong") + up("recovery")) - (up("pullback") + up("breakdown"))
+
+
+def _market_date(record: Mapping[str, Any]) -> Any:
+    return _aware_record_time(record).astimezone(MARKET_TZ).date()
+
+
+def _previous_session_closes(records: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """Map each record to the last record of the preceding ET session."""
+    result: dict[int, dict[str, Any]] = {}
+    last_of_previous: dict[str, Any] | None = None
+    last_seen: dict[str, Any] | None = None
+    current_date = None
+    for record in records:
+        try:
+            date = _market_date(record)
+        except ValueError:
+            continue
+        if current_date is not None and date != current_date:
+            last_of_previous = last_seen
+        current_date = date
+        if last_of_previous is not None:
+            result[id(record)] = last_of_previous
+        last_seen = record
+    return result
+
+
+def _market_status(
+    record: Mapping[str, Any] | None,
+    previous_close: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Project the latest breadth row into the dashboard's stable UI contract.
+
+    ``previous_close`` is the prior session's closing breadth row; Pine Risk Off
+    needs it for net momentum and is never assumed without it.
+    """
     if record is None:
         return {}
     phase_code = record.get("phase_code", record.get("phase"))
@@ -513,15 +580,30 @@ def _market_status(record: Mapping[str, Any] | None) -> dict[str, Any]:
     }
     breakdown = record.get("breakdown", record.get("bd"))
     ntss = record.get("ntss", record.get("mid"))
+    pine = _pine_components(record)
+    pine_strong = pine["strong"] if pine else record.get("strong", record.get("s"))
+    pine_breakdown = pine["breakdown"] if pine else breakdown
+    net_momentum = _pine_net_momentum(record, previous_close)
+    risk_off_zone = (
+        pine_strong is not None and pine_breakdown is not None
+        and pine_breakdown > pine_strong and pine_breakdown > RISK_OFF_BREAKDOWN
+    )
     if breakdown is not None and breakdown < 35:
         signal, short_type, label = "long", None, "多头窗口"
         if phase_code == "C":
             action = "Phase C 牛市回调：使用 ADV Top3 流动性腿 + ADV Top10 等权 Dip 代理腿。"
         else:
             action = "多头窗口：使用 ADV Top3 流动性腿 + ADV Top15 → EMA200 Top3 趋势腿。"
-    elif (ntss is not None and ntss < 0) or phase_code in {"G", "H"}:
+    elif risk_off_zone and net_momentum is not None and net_momentum <= RISK_OFF_MOMENTUM:
         signal, short_type, label = "short", "Risk Off", "空头保险"
         action = "Risk Off 环境：若处于空仓期并满足 Gap Short，A 类只做 ADV Top30 MA200 最弱股 30%，不叠加 QQQ/SPY 70%。"
+    elif risk_off_zone:
+        signal, short_type, label = "short_watch", "Risk Off Pending", "Risk Off 待触发"
+        nm = "—" if net_momentum is None else f"{net_momentum:.2f}"
+        action = (
+            f"Risk Off 待触发：Breakdown > 50 且 > Strong，净动量 {nm} 需 ≤ {RISK_OFF_MOMENTUM:.0f}"
+            "（Pine 口径，对前一日收盘，以收盘为准）。"
+        )
     elif breakdown is not None and breakdown >= 35:
         signal, short_type, label = "short_watch", "Trail Exhaustion", "空头雷达"
         action = "Trail/B 类只作早期裂缝雷达，小仓位或待命，不当作稳定收益来源。"
@@ -549,6 +631,7 @@ def _market_status(record: Mapping[str, Any] | None) -> dict[str, Any]:
         "action": action,
         "basis": "NTSS = VIX3M - VIX; positive=calm, negative=panic",
         "as_of": record.get("t"),
+        "net_momentum_pine": None if net_momentum is None else round(net_momentum, 2),
     }
     aliases = {
         "strong": ("strong", "s"),
@@ -608,7 +691,11 @@ def run(
         list(raw_breadth.get("records", [])),
     )
     latest = breadth_records[-1] if breadth_records else None
-    market_status = _market_status(latest)
+    daily_close = raw_breadth.get("daily_close") or {}
+    latest_previous_close = daily_close.get("previous") if isinstance(daily_close, Mapping) else None
+    if latest_previous_close is None and latest is not None:
+        latest_previous_close = _previous_session_closes(breadth_records).get(id(latest))
+    market_status = _market_status(latest, latest_previous_close)
     portfolio = build_mvs_portfolio(
         portfolio_signals, market_status, position_state=ledger
     )
@@ -641,6 +728,15 @@ def run(
     )
     if raw_breadth.get("daily_close") is not None:
         breadth["daily_close"] = raw_breadth["daily_close"]
+    if breadth["records"] and market_status:
+        # Keep the latest row consistent with the homepage, which measures net
+        # momentum against the authoritative previous daily close.
+        breadth["records"][-1].update({
+            "nm": market_status.get("net_momentum_pine"),
+            "action": market_status.get("action"),
+            "signal": market_status.get("signal"),
+            "short_type": market_status.get("short_type"),
+        })
     breadth["analogs"] = _breadth_analogs(output_path, breadth.get("daily_close"), latest)
     generation_id = f"{generated_at.isoformat()}-{uuid.uuid4().hex[:12]}"
     dashboard["generation_id"] = generation_id
