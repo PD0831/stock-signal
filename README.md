@@ -11,7 +11,7 @@
 
 | 环节 | 行为 |
 | --- | --- |
-| 行情计算 | `refresh_dashboard.yml` 在周一至周五 UTC 13–23 点的 07、22、37、52 分尝试运行；由 XNYS 日历判断交易日、夏令时和提前收盘 |
+| 行情计算 | `refresh_dashboard.yml` 在周一至周五 UTC 13–21 点的 07、37 分（每 30 分钟）运行；由 XNYS 日历判断交易日、夏令时和提前收盘 |
 | 收盘补齐 | 同一美东交易日收盘后最多 6 小时内，若缺少最后一个 15 分钟时段，再下载一次；已有末根数据且快照在收盘后生成才跳过 |
 | 页面更新 | 页面可见时每 60 秒检查一次，重新切回页面立即检查；请求和响应均禁止 HTTP 缓存 |
 | 发布 | 成对验证并提交 `data/dashboard_snapshot.json` 和 `data/breadth_15m.json`；Render 部署后才会读到新文件 |
@@ -21,20 +21,16 @@ GitHub 的 `schedule` 是尽力执行，并不保证 15 分钟准时运行；Yah
 
 周末、节假日、开盘前显示上一交易日属于正常；盘中长时间仍停在上一交易日需要按下面流程排查。`generated_at` 是计算批次时间，`data_as_of` 是实际宽度最新行情时间，两者不能混用。盘中快照的实际行情落后生成时间超过 45 分钟也会标为过期。休市状态来自快照生成时的日历判定。
 
-### 需要更准时的盘中更新
+### Actions 分钟额度
 
-配置独立定时器，每 15 分钟调用 GitHub 的手动工作流接口，避开 GitHub cron 触发延迟（Actions 排队仍可能延迟）：
+私有仓库免费额度为每月 2,000 分钟，每个 job 按整分钟向上计费。原先 cron-job.org 全天每 15 分钟调用 `workflow_dispatch`，再加 GitHub 自身 15 分钟 cron，每月约 7,000 分钟，额度用完后所有工作流（含 `fetch_stock_data.yml`）都会秒失败且没有日志。
 
-```text
-POST https://api.github.com/repos/PD0831/stock-signal/actions/workflows/refresh_dashboard.yml/dispatches
-Authorization: Bearer <保存在定时器密钥库中的令牌>
-Accept: application/vnd.github+json
-Content-Type: application/json
+现在的规则：
 
-{"ref":"main"}
-```
-
-令牌只需该仓库的 Actions 写权限，不要放在网页、README 或 Git 中。外部触发不带参数时同样受 NYSE 日历门禁约束（休市、盘前盘后直接跳过），所以定时器可以全天每 15 分钟调用。人工恢复时在 Actions 页面手动运行并勾选 `force`，才会绕过门禁。当前使用 cron-job.org 触发。 若需要可靠的低延迟，应使用常驻生产进程或专用调度服务，不能仅依靠 GitHub cron + Render 免费服务。
+- 只有 GitHub `schedule` 会真正计算：交易日每 30 分钟一次，每月约 1,300 分钟。
+- 不带 `force` 的 `workflow_dispatch`（例如外部定时器）在 job 级别直接跳过，不启动 runner，不消耗分钟。**请在 cron-job.org 停用该任务**，避免产生大量空运行记录。
+- 人工恢复：Actions 页面 **Run workflow → main** 并勾选 `force`。
+- 如需恢复 15 分钟频率：将仓库设为公开（标准 runner 免费不限分钟），或在 Billing 里为 Actions 设置付费预算。
 
 ## 本地运行
 

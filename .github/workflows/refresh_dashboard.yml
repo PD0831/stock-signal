@@ -4,12 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: 'Ignore the NYSE calendar gate (manual recovery only)'
+        description: 'Run now, ignoring the NYSE calendar gate (unforced dispatches are skipped)'
         type: boolean
         default: false
   schedule:
-    # Broad UTC window; the XNYS calendar gate handles DST, holidays and early closes.
-    - cron: '7,22,37,52 13-23 * * 1-5'
+    # Every 30 min on weekdays, 13:07-21:37 UTC, covering the session in both EDT and EST.
+    # The XNYS calendar gate handles DST, holidays and early closes. Kept at 30 min so a
+    # private repo stays within the 2,000 free Actions minutes per month (~1,300 used).
+    - cron: '7,37 13-21 * * 1-5'
 
 concurrency:
   group: mvs-dashboard-refresh-${{ github.ref }}
@@ -17,6 +19,9 @@ concurrency:
 
 jobs:
   build:
+    # Unforced workflow_dispatch (e.g. an external 24/7 cron hitting the API) is skipped
+    # at job level, so it never starts a runner and costs no Actions minutes.
+    if: github.event_name == 'schedule' || inputs.force
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
