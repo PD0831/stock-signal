@@ -2,8 +2,8 @@ name: Fetch Stock Data
 
 on:
   schedule:
-    # Run at 02:00 UTC daily (after US market close + data settle)
-    - cron: "0 2 * * *"
+    # Run at 02:00 UTC Tue-Sat (after each weekday US close + data settle)
+    - cron: "0 2 * * 2-6"
   workflow_dispatch:   # allow manual trigger from GitHub UI
 
 jobs:
