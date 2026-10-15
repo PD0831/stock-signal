@@ -66,3 +66,14 @@ def test_dispatch_without_force_stays_calendar_gated(monkeypatch, tmp_path):
 
 def test_forced_dispatch_bypasses_calendar_gate(monkeypatch, tmp_path):
     assert _gate_output(monkeypatch, tmp_path, 'true') == 'should_run=true\n'
+
+
+def test_overlapping_triggers_skip_recent_in_session_snapshot(tmp_path, monkeypatch):
+    path = tmp_path / 'breadth_15m.json'
+    path.write_text(json.dumps({'generated_at': '2026-09-18T15:00:00Z', 'records': [{'t': '2026-09-18T14:45:00Z'}]}))
+    monkeypatch.delenv('MIN_REFRESH_MINUTES', raising=False)
+    assert not hours.should_refresh(datetime.fromisoformat('2026-09-18T15:07:00+00:00'), snapshot_path=path)
+    assert hours.should_refresh(datetime.fromisoformat('2026-09-18T15:15:00+00:00'), snapshot_path=path)
+    monkeypatch.setenv('MIN_REFRESH_MINUTES', '25')
+    assert not hours.should_refresh(datetime.fromisoformat('2026-09-18T15:15:00+00:00'), snapshot_path=path)
+    assert hours.should_refresh(datetime.fromisoformat('2026-09-18T15:30:00+00:00'), snapshot_path=path)

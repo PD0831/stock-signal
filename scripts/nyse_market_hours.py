@@ -22,8 +22,37 @@ def is_nyse_open(at: datetime, *, calendar=None) -> bool:
     return bool(calendar.is_open_on_minute(pd.Timestamp(at)))
 
 
-def should_refresh(at: datetime, *, snapshot_path: Path = Path("data/breadth_15m.json"), calendar=None) -> bool:
-    """Refresh in-session, and catch up a delayed run after the same session closes."""
+def _min_interval() -> timedelta:
+    """In-session spacing between builds; repo variable MIN_REFRESH_MINUTES tunes Actions usage."""
+    try:
+        minutes = float(os.environ.get("MIN_REFRESH_MINUTES") or 10)
+    except ValueError:
+        minutes = 10
+    return timedelta(minutes=max(minutes, 0))
+
+
+def _generated_at(snapshot_path: Path):
+    import pandas as pd
+    try:
+        generated = pd.Timestamp(json.loads(snapshot_path.read_text())["generated_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return generated.tz_localize("UTC") if generated.tzinfo is None else generated
+
+
+def should_refresh(
+    at: datetime,
+    *,
+    snapshot_path: Path = Path("data/breadth_15m.json"),
+    calendar=None,
+    min_interval: timedelta | None = None,
+) -> bool:
+    """Refresh in-session, and catch up a delayed run after the same session closes.
+
+    Overlapping triggers (external dispatcher plus GitHub cron) are collapsed:
+    an in-session run is skipped when the committed snapshot is younger than
+    ``min_interval``, so each billed build produces a genuinely new snapshot.
+    """
     import pandas as pd
     if at.tzinfo is None:
         raise ValueError("at must be timezone-aware")
@@ -38,7 +67,9 @@ def should_refresh(at: datetime, *, snapshot_path: Path = Path("data/breadth_15m
     if now < opened or now > closed + timedelta(hours=6):
         return False
     if now < closed:
-        return True
+        generated = _generated_at(snapshot_path)
+        interval = _min_interval() if min_interval is None else min_interval
+        return generated is None or now - generated >= interval
     try:
         snapshot = json.loads(snapshot_path.read_text())
         records = snapshot["records"]

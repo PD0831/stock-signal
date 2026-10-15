@@ -8,8 +8,9 @@ on:
         type: boolean
         default: false
   schedule:
-    # Broad UTC window; the XNYS calendar gate handles DST, holidays and early closes.
-    - cron: '7,22,37,52 13-23 * * 1-5'
+    # UTC window covering 09:30-16:00 ET in both EDT and EST plus the post-close
+    # catch-up run; the XNYS calendar gate handles DST, holidays and early closes.
+    - cron: '7,22,37,52 13-21 * * 1-5'
 
 concurrency:
   group: mvs-dashboard-refresh-${{ github.ref }}
@@ -41,6 +42,8 @@ jobs:
         id: market-hours
         env:
           FORCE_REFRESH: ${{ inputs.force }}
+          # Optional repo variable; raise it (e.g. 25) to cut billed Actions minutes.
+          MIN_REFRESH_MINUTES: ${{ vars.MIN_REFRESH_MINUTES }}
         run: python scripts/nyse_market_hours.py
 
       - name: Build snapshots
