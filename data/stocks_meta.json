@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-15 07:03 UTC",
+  "updated_at": "2026-10-16 06:47 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
@@ -7,12 +7,12 @@
   "expected_symbols": 503,
   "symbols": 503,
   "missing_symbols": [],
-  "rows": 250352,
-  "date_min": "2024-10-15",
-  "date_max": "2026-10-14",
+  "rows": 250357,
+  "date_min": "2024-10-16",
+  "date_max": "2026-10-15",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "13-Oct-2026",
-  "spy_raw_holding_rows": 506,
+  "spy_holdings_as_of": "14-Oct-2026",
+  "spy_raw_holding_rows": 505,
   "spy_excluded_rows": [
     {
       "name": "US DOLLAR",
@@ -25,13 +25,7 @@
       "ticker": "2602335D",
       "currency": "USD",
       "reason": "non_ticker_identifier"
-    },
-    {
-      "name": "SKYDANCE CORP",
-      "ticker": "SKYD/WS",
-      "currency": "USD",
-      "reason": "non_ticker_identifier"
     }
   ],
-  "spy_excluded_count": 3
+  "spy_excluded_count": 2
 }
