@@ -92,7 +92,7 @@ def _validate_dashboard(payload: dict[str, Any]) -> None:
 def _validate_breadth(payload: dict[str, Any]) -> None:
     _require(payload, "quality", dict, "breadth")
     records = _require(payload, "records", list, "breadth")
-    numeric_fields = {"s", "bd", "mid", "mom", "ntss", "a20", "a50", "a200", "spy", "qqq"}
+    numeric_fields = {"s", "bd", "mid", "mom", "ntss", "a20", "a50", "a200", "spy", "qqq", "rsp"}
     for index, record in enumerate(records):
         if not isinstance(record, dict) or not isinstance(record.get("t"), str):
             raise SnapshotUnavailable(f"breadth: record {index} must be object with string t")

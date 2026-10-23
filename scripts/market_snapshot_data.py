@@ -68,18 +68,23 @@ def _download_fields(symbols: list[str], *, period: str, interval: str, fields: 
     return result
 
 
+BENCHMARKS = ("SPY", "QQQ", "RSP")
+
+
+def benchmark_price_map(frame: pd.DataFrame | None) -> dict[pd.Timestamp, float]:
+    """Valid positive 15-minute closes keyed by UTC instant."""
+    values = {}
+    if frame is not None and "Close" in frame:
+        for stamp, close in frame["Close"].items():
+            stamp = pd.Timestamp(stamp)
+            if stamp.tzinfo is not None and pd.notna(close) and np.isfinite(close) and close > 0:
+                values[stamp.tz_convert("UTC")] = round(float(close), 3)
+    return values
+
+
 def attach_benchmark_prices(records: list[dict[str, Any]], histories: dict[str, pd.DataFrame]) -> list[dict[str, Any]]:
     """Join raw 15-minute closes at exact instants; missing bars stay missing."""
-    prices = {}
-    for symbol in ("SPY", "QQQ"):
-        frame = histories.get(symbol)
-        values = {}
-        if frame is not None and "Close" in frame:
-            for stamp, close in frame["Close"].items():
-                stamp = pd.Timestamp(stamp)
-                if stamp.tzinfo is not None and pd.notna(close) and np.isfinite(close) and close > 0:
-                    values[stamp.tz_convert("UTC")] = round(float(close), 3)
-        prices[symbol.lower()] = values
+    prices = {symbol.lower(): benchmark_price_map(histories.get(symbol)) for symbol in BENCHMARKS}
     return [{**row, **{key: values.get(pd.Timestamp(row["t"]).tz_convert("UTC"))
                       for key, values in prices.items()}} for row in records]
 
@@ -331,5 +336,12 @@ class SnapshotMarketData:
             benchmarks = _download_fields(["SPY", "QQQ"], period="5d", interval="15m", fields=("Close",))
         except Exception:
             benchmarks = {}
+        # RSP (equal-weight S&P 500) uses the provider's full 60-day 15m window so
+        # saved history without RSP is backfilled for the RSP - SPY spread panel.
+        try:
+            benchmarks.update(_download_fields(["RSP"], period="60d", interval="15m", fields=("Close",)))
+        except Exception:
+            pass
         records = attach_benchmark_prices(records, benchmarks)
-        return {"records": records, "daily_close": daily_close_payload(daily_wide_all, len(symbols), ntss=daily_ntss), "n_stocks": len(symbols), "n_valid_15m": len(common), "n_valid_hourly": len(common), **self._universe_meta.get("sp500", {})}
+        rsp_backfill = {stamp.isoformat(): close for stamp, close in benchmark_price_map(benchmarks.get("RSP")).items()}
+        return {"records": records, "benchmark_backfill": {"rsp": rsp_backfill}, "daily_close": daily_close_payload(daily_wide_all, len(symbols), ntss=daily_ntss), "n_stocks": len(symbols), "n_valid_15m": len(common), "n_valid_hourly": len(common), **self._universe_meta.get("sp500", {})}
