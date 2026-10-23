@@ -297,6 +297,30 @@ def _subtract_calendar_months(value: datetime, months: int) -> datetime:
     return value.replace(year=year, month=month, day=day)
 
 
+BENCHMARK_KEYS = ("spy", "qqq", "rsp")
+
+
+def backfill_benchmark_prices(
+    records: list[dict[str, Any]],
+    backfill: Mapping[str, Mapping[str, float]] | None,
+) -> list[dict[str, Any]]:
+    """Fill missing benchmark prices at exact instants from a longer provider window."""
+    if not backfill:
+        return records
+    lookups = {
+        key: {_aware_record_time({"t": stamp}): price for stamp, price in prices.items()}
+        for key, prices in backfill.items()
+        if key in BENCHMARK_KEYS and prices
+    }
+    for record in records:
+        for key, prices in lookups.items():
+            if record.get(key) is None:
+                price = prices.get(_aware_record_time(record))
+                if price is not None:
+                    record[key] = price
+    return records
+
+
 def merge_breadth_history(
     existing_records: list[dict[str, Any]],
     new_records: list[dict[str, Any]],
@@ -312,7 +336,7 @@ def merge_breadth_history(
             copied = deepcopy(original)
             timestamp = _aware_record_time(copied)
             previous = merged.get(timestamp, {})
-            for key in ("spy", "qqq"):
+            for key in BENCHMARK_KEYS:
                 if copied.get(key) is None and previous.get(key) is not None:
                     copied[key] = previous[key]
             merged[timestamp] = copied
@@ -686,9 +710,12 @@ def run(
         portfolio_signals = provider.compute_signals("nasdaq100", as_of=cutoff)
         ledger["selection_as_of"] = portfolio_signals.get("selection_as_of", cutoff)
     raw_breadth = provider.compute_breadth()
-    breadth_records = merge_breadth_history(
-        _existing_breadth_records(output_path),
-        list(raw_breadth.get("records", [])),
+    breadth_records = backfill_benchmark_prices(
+        merge_breadth_history(
+            _existing_breadth_records(output_path),
+            list(raw_breadth.get("records", [])),
+        ),
+        raw_breadth.get("benchmark_backfill"),
     )
     latest = breadth_records[-1] if breadth_records else None
     daily_close = raw_breadth.get("daily_close") or {}

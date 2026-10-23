@@ -220,7 +220,8 @@ def test_refresh_workflow_separates_read_only_build_from_write_publish():
     assert force["type"] == "boolean" and force["default"] is False
     gate = next(step for step in build["steps"] if step.get("id") == "market-hours")
     assert gate["env"] == {"FORCE_REFRESH": "${{ inputs.force }}"}
-    assert workflow["on"]["schedule"] == [{"cron": "7,22,37,52 13-23 * * 1-5"}]
+    assert workflow["on"]["schedule"] == [{"cron": "7,37 13-21 * * 1-5"}]
+    assert build["if"] == "github.event_name == 'schedule' || inputs.force"
     assert workflow["concurrency"] == {
         "group": "mvs-dashboard-refresh-${{ github.ref }}",
         "cancel-in-progress": False,
