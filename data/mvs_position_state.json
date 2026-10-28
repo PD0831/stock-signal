@@ -4,7 +4,82 @@
   "entry_signal": "Long",
   "signal_date": "2026-06-04",
   "execution_date": "2026-06-05",
-  "source_as_of": "2026-07-09",
+  "source_as_of": "2026-10-27",
   "source_status": "Offen",
-  "source": "Market_Vital_Signs_IG_NASDAQ_2026-07-09_7fdaf.csv"
+  "source": "mvs-strategy",
+  "position": "Long",
+  "direction": "long",
+  "entry_price": 30305.3,
+  "hard_stop": 25759.505,
+  "trailing_activation": 33032.777,
+  "trailing_level": null,
+  "trailing_active": false,
+  "effective_stop": 25759.505,
+  "partial_tp": {
+    "filled": false,
+    "limit_active": false,
+    "limit_price": null
+  },
+  "next_triggers": {
+    "hard_stop": 25759.505,
+    "trailing_activation": 33032.777,
+    "trailing_level": null,
+    "partial_take_profit": null,
+    "partial_take_profit_arms": "close_below_trend_ema",
+    "long": {
+      "ready": false,
+      "net_momentum": 1.99,
+      "trigger": 5.0,
+      "blocked_by": [
+        "already_long",
+        "net_momentum"
+      ]
+    },
+    "dip_long": {
+      "ready": false,
+      "breakdown": 26.84,
+      "trigger": 76.0,
+      "blocked_by": [
+        "already_long",
+        "breakdown"
+      ]
+    },
+    "risk_off": {
+      "ready": false,
+      "net_momentum": 1.99,
+      "trigger": -5.0,
+      "breakdown": 26.84,
+      "strong": 59.24,
+      "blocked_by": [
+        "breakdown_above_strong",
+        "breakdown_above_limit",
+        "net_momentum"
+      ]
+    },
+    "gap_short": {
+      "ready": false,
+      "in_window": false,
+      "days_below": 0,
+      "days_required": 2,
+      "threshold": null,
+      "gap_class": null,
+      "blocked_by": [
+        "not_in_gap"
+      ]
+    }
+  },
+  "market": {
+    "close": 29691.3,
+    "strong": 59.24,
+    "breakdown": 26.84,
+    "net_momentum": 1.99,
+    "ntss": -0.104752,
+    "vix_state": "green",
+    "trend_ema": 28586.1081
+  },
+  "sizing_mode": "regular_long",
+  "data_source": "tvdatafeed",
+  "degraded": false,
+  "degraded_reason": null,
+  "as_of": "2026-10-27"
 }
