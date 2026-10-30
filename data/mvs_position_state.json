@@ -4,7 +4,7 @@
   "entry_signal": "Long",
   "signal_date": "2026-06-04",
   "execution_date": "2026-06-05",
-  "source_as_of": "2026-10-29",
+  "source_as_of": "2026-10-30",
   "source_status": "Offen",
   "source": "mvs-strategy",
   "position": "Long",
@@ -17,26 +17,27 @@
   "effective_stop": 25759.505,
   "partial_tp": {
     "filled": false,
-    "limit_active": false,
-    "limit_price": null
+    "limit_active": true,
+    "limit_price": 31972.0915
   },
   "next_triggers": {
     "hard_stop": 25759.505,
     "trailing_activation": 33032.777,
     "trailing_level": null,
-    "partial_take_profit": null,
+    "partial_take_profit": 31972.0915,
     "partial_take_profit_arms": "close_below_trend_ema",
     "long": {
       "ready": false,
-      "net_momentum": 5.56,
+      "net_momentum": -5.77,
       "trigger": 5.0,
       "blocked_by": [
-        "already_long"
+        "already_long",
+        "net_momentum"
       ]
     },
     "dip_long": {
       "ready": false,
-      "breakdown": 25.05,
+      "breakdown": 30.82,
       "trigger": 76.0,
       "blocked_by": [
         "already_long",
@@ -45,14 +46,13 @@
     },
     "risk_off": {
       "ready": false,
-      "net_momentum": 5.56,
+      "net_momentum": -5.77,
       "trigger": -5.0,
-      "breakdown": 25.05,
-      "strong": 63.81,
+      "breakdown": 30.82,
+      "strong": 59.44,
       "blocked_by": [
         "breakdown_above_strong",
-        "breakdown_above_limit",
-        "net_momentum"
+        "breakdown_above_limit"
       ]
     },
     "gap_short": {
@@ -63,23 +63,22 @@
       "threshold": null,
       "gap_class": null,
       "blocked_by": [
-        "not_in_gap",
-        "long_signal"
+        "not_in_gap"
       ]
     }
   },
   "market": {
-    "close": 28937.8,
-    "strong": 63.81,
-    "breakdown": 25.05,
-    "net_momentum": 5.56,
-    "ntss": -0.112029,
-    "vix_state": "green",
-    "trend_ema": 28598.7632
+    "close": 28400.8,
+    "strong": 59.44,
+    "breakdown": 30.82,
+    "net_momentum": -5.77,
+    "ntss": -0.065448,
+    "vix_state": "yellow",
+    "trend_ema": 28596.7934
   },
   "sizing_mode": "regular_long",
   "data_source": "tvdatafeed",
   "degraded": false,
   "degraded_reason": null,
-  "as_of": "2026-10-29"
+  "as_of": "2026-10-30"
 }
