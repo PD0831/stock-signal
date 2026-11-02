@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -66,3 +66,102 @@ def test_dispatch_without_force_stays_calendar_gated(monkeypatch, tmp_path):
 
 def test_forced_dispatch_bypasses_calendar_gate(monkeypatch, tmp_path):
     assert _gate_output(monkeypatch, tmp_path, 'true') == 'should_run=true\n'
+
+
+def _expand_cron_field(field: str) -> list[int]:
+    values: list[int] = []
+    for part in field.split(","):
+        if "-" in part:
+            start, end = (int(piece) for piece in part.split("-"))
+            values.extend(range(start, end + 1))
+        else:
+            values.append(int(part))
+    return values
+
+
+def _cron_slots(cron: str, day) -> list[datetime]:
+    minute_field, hour_field, dom, month, dow = cron.split()
+    assert dom == "*" and month == "*", cron
+    dows = set(_expand_cron_field(dow))
+    cron_dow = (day.weekday() + 1) % 7
+    if cron_dow not in dows and not (cron_dow == 0 and 7 in dows):
+        return []
+    return [
+        datetime(day.year, day.month, day.day, hour, minute, tzinfo=timezone.utc)
+        for hour in _expand_cron_field(hour_field)
+        for minute in _expand_cron_field(minute_field)
+    ]
+
+
+def _refresh_crons() -> list[str]:
+    import yaml
+
+    workflow_path = Path(__file__).parents[1] / ".github" / "workflows" / "refresh_dashboard.yml"
+    parsed = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    parsed["on"] = parsed.pop(True, parsed.get("on"))
+    return [item["cron"] for item in parsed["on"]["schedule"]]
+
+
+def _slots_on(day) -> list[datetime]:
+    slots: list[datetime] = []
+    for cron in _refresh_crons():
+        slots.extend(_cron_slots(cron, day))
+    return slots
+
+
+def test_month_end_close_has_post_close_refresh_slot(tmp_path):
+    """The weekday cron already runs after the last XNYS close; do not add slots.
+
+    EDT regular close is 20:00 UTC (first post-close slot 20:07). EST regular close
+    is 21:00 UTC, so hour 21 is required (first post-close slot 21:07). An early-close
+    month-end is earlier. A start delayed past UTC midnight still passes the gate while
+    it is inside the six-hour window, because that window is still the session's ET date.
+    """
+    import exchange_calendars as xcals
+    import pandas as pd
+
+    calendar = xcals.get_calendar("XNYS")
+
+    def first_slot_after_close(session_day: str):
+        close = pd.Timestamp(calendar.session_close(pd.Timestamp(session_day))).to_pydatetime()
+        close = close.astimezone(timezone.utc)
+        slots = [
+            slot for slot in _slots_on(close.date())
+            if close < slot <= close + timedelta(hours=6)
+        ]
+        assert slots, (session_day, close.isoformat())
+        return min(slots), close
+
+    # October 2026 month-end is a Friday in EDT. The observed build was 22:37 UTC.
+    slot, close = first_slot_after_close("2026-10-30")
+    assert slot == datetime(2026, 10, 30, 20, 7, tzinfo=timezone.utc)
+    snapshot = tmp_path / "breadth_15m.json"
+    snapshot.write_text(json.dumps({
+        "generated_at": "2026-10-30T19:40:00+00:00",
+        "records": [{"t": "2026-10-30T19:45:00+00:00"}],
+    }))
+    assert hours.should_refresh(slot, snapshot_path=snapshot)
+    assert hours.should_refresh(datetime.fromisoformat("2026-10-30T22:37:17+00:00"), snapshot_path=snapshot)
+    assert hours.should_refresh(datetime.fromisoformat("2026-10-31T01:30:00+00:00"), snapshot_path=snapshot)
+    assert not hours.should_refresh(datetime.fromisoformat("2026-10-31T15:00:00+00:00"), snapshot_path=snapshot)
+    assert _slots_on(datetime(2026, 10, 31, tzinfo=timezone.utc).date()) == []
+
+    # December 2025 month-end is a Wednesday in EST. Hour 20 is still before the close.
+    slot, close = first_slot_after_close("2025-12-31")
+    assert close == datetime(2025, 12, 31, 21, 0, tzinfo=timezone.utc)
+    assert slot == datetime(2025, 12, 31, 21, 7, tzinfo=timezone.utc)
+    snapshot.write_text(json.dumps({
+        "generated_at": "2025-12-31T20:40:00+00:00",
+        "records": [{"t": "2025-12-31T20:45:00+00:00"}],
+    }))
+    assert hours.should_refresh(slot, snapshot_path=snapshot)
+
+    # November 2025 month-end is Black Friday, an early close at 13:00 ET / 18:00 UTC.
+    slot, close = first_slot_after_close("2025-11-28")
+    assert close == datetime(2025, 11, 28, 18, 0, tzinfo=timezone.utc)
+    assert slot == datetime(2025, 11, 28, 18, 7, tzinfo=timezone.utc)
+    snapshot.write_text(json.dumps({
+        "generated_at": "2025-11-28T17:40:00+00:00",
+        "records": [{"t": "2025-11-28T17:45:00+00:00"}],
+    }))
+    assert hours.should_refresh(slot, snapshot_path=snapshot)

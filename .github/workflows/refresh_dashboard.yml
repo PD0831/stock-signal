@@ -8,9 +8,12 @@ on:
         type: boolean
         default: false
   schedule:
-    # Every 30 min on weekdays, 13:07-21:37 UTC, covering the session in both EDT and EST.
-    # The XNYS calendar gate handles DST, holidays and early closes. Kept at 30 min so a
-    # private repo stays within the 2,000 free Actions minutes per month (~1,300 used).
+    # Every 30 min on weekdays, 13:07-21:37 UTC. EDT closes 20:00 UTC (post-close
+    # run at 20:07); EST closes 21:00 UTC (post-close run at 21:07). Early closes are
+    # earlier. Hour 21 is what puts a winter month-end refresh after the close. The
+    # XNYS gate handles DST, holidays, early closes, and a delayed start up to 6h
+    # after the close (still the same ET session date). Kept at 30 min so a private
+    # repo stays within the 2,000 free Actions minutes per month (~1,300 used).
     - cron: '7,37 13-21 * * 1-5'
 
 concurrency:

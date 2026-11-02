@@ -137,6 +137,54 @@ def test_open_trade_ledger_selects_latest_completed_month_end(tmp_path):
     ) == "2026-08-31"
 
 
+# signal_date is before every fixture so max(signal_date, cutoff) does not hide the month rule.
+_OLD_ENTRY = {"position_state": "long", "signal_date": "2024-06-04"}
+
+
+@pytest.mark.parametrize(
+    ("generated_at", "expected"),
+    [
+        # (a) last October 2026 session closes 16:00 EDT / 20:00 UTC.
+        ("2026-10-30T20:00:00+00:00", "2026-10-30"),
+        ("2026-10-30T16:30:00-04:00", "2026-10-30"),
+        ("2026-10-30T22:37:17+00:00", "2026-10-30"),
+        ("2026-10-31T01:30:00+00:00", "2026-10-30"),
+        # (b) same session, before the close, stays on the previous calendar month end.
+        ("2026-10-30T19:59:00+00:00", "2026-09-30"),
+        ("2026-10-30T15:30:00-04:00", "2026-09-30"),
+        # (c) 2025-11-28 is the last session of November and an early close (13:00 ET).
+        # 19:30 UTC is after that close and still before a regular 16:00 ET close.
+        ("2025-11-28T18:00:00+00:00", "2025-11-28"),
+        ("2025-11-28T19:30:00+00:00", "2025-11-28"),
+        ("2025-11-28T17:59:00+00:00", "2025-10-31"),
+        # (d) ordinary days keep the previous UTC calendar-month end.
+        # 2026-05-31 is a Sunday, not the 2026-05-29 session. 2026-11-27 19:00 UTC
+        # is after that day's early close, and November's last session is still ahead.
+        ("2026-09-11T14:00:00+00:00", "2026-08-31"),
+        ("2026-06-15T14:00:00+00:00", "2026-05-31"),
+        ("2026-11-16T15:00:00+00:00", "2026-10-31"),
+        ("2026-11-27T19:00:00+00:00", "2026-10-31"),
+        # (e) weekend after the October session, including Sunday in November.
+        ("2026-10-31T15:00:00+00:00", "2026-10-30"),
+        ("2026-11-01T18:00:00+00:00", "2026-10-30"),
+        # The review stays on the session until the next open, then the legacy date returns.
+        ("2026-11-02T14:29:00+00:00", "2026-10-30"),
+        ("2026-11-02T14:30:00+00:00", "2026-10-31"),
+    ],
+)
+def test_selection_cutoff_follows_last_session_close(generated_at, expected):
+    assert _selection_cutoff(datetime.fromisoformat(generated_at), _OLD_ENTRY) == expected
+
+
+def test_selection_cutoff_keeps_newer_signal_date():
+    after_close = datetime.fromisoformat("2026-11-01T18:00:00+00:00")
+    assert _selection_cutoff(after_close, {"signal_date": "2026-10-31"}) == "2026-10-31"
+    assert _selection_cutoff(
+        datetime(2026, 11, 16, 15, 0, tzinfo=timezone.utc),
+        {"signal_date": "2026-11-04"},
+    ) == "2026-11-04"
+
+
 def test_dashboard_snapshot_accepts_precomputed_mvs_portfolio():
     generated_at = datetime(2026, 9, 11, 14, 0, tzinfo=timezone.utc)
     portfolio = build_mvs_portfolio(
@@ -1173,6 +1221,23 @@ def test_run_uses_open_trade_ledger_and_monthly_selection_cutoff(tmp_path):
         payload = json.loads((tmp_path / name).read_text(encoding="utf-8"))
         assert "raw_prices" not in json.dumps(payload)
     assert dashboard["generation_id"] == breadth["generation_id"]
+
+
+def test_run_uses_month_end_session_after_its_close(tmp_path):
+    provider = FakeProvider()
+    dashboard, _breadth = run(
+        tmp_path,
+        provider=provider,
+        generated_at=datetime.fromisoformat("2026-10-30T22:37:17+00:00"),
+        position_state={
+            "position_state": "long",
+            "entry_signal": "Long",
+            "signal_date": "2026-06-04",
+        },
+    )
+
+    assert ("nasdaq100", "2026-10-30") in provider.signal_calls
+    assert dashboard["strategy"]["selection_as_of"] == "2026-10-30"
 
 
 def test_publish_pair_rolls_back_first_file_when_second_replace_fails(tmp_path, monkeypatch):
