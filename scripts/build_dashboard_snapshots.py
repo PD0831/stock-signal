@@ -9,7 +9,7 @@ import argparse
 import uuid
 import calendar
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol
 from zoneinfo import ZoneInfo
@@ -472,12 +472,98 @@ def _load_position_state(output_dir: Path) -> dict[str, Any]:
     return state
 
 
-def _selection_cutoff(generated_at: datetime, position_state: Mapping[str, Any]) -> str:
+def _xnys_calendar(calendar: Any):
+    if calendar is not None:
+        return calendar
+    import exchange_calendars as xcals
+
+    return xcals.get_calendar("XNYS")
+
+
+def _last_session_of_month(calendar: Any, month_start: date):
+    """Last XNYS session whose label falls in `month_start`'s calendar month."""
+    import pandas as pd
+
+    if month_start.month == 12:
+        month_end = date(month_start.year, 12, 31)
+    else:
+        month_end = date(month_start.year, month_start.month + 1, 1) - timedelta(days=1)
+    start = pd.Timestamp(month_start)
+    end = pd.Timestamp(month_end)
+    first, last = pd.Timestamp(calendar.first_session), pd.Timestamp(calendar.last_session)
+    if end < first or start > last:
+        return None
+    sessions = calendar.sessions_in_range(max(start, first), min(end, last))
+    if len(sessions) == 0:
+        return None
+    session = sessions[-1]
+    if session.year != month_start.year or session.month != month_start.month:
+        return None
+    return session
+
+
+def _month_starts_around(generated_at: datetime) -> list[date]:
+    """Calendar months that can own a session whose next open is still ahead."""
+    starts: list[date] = []
+    for day in (
+        generated_at.astimezone(timezone.utc).date(),
+        generated_at.astimezone(MARKET_TZ).date(),
+    ):
+        current = day.replace(day=1)
+        previous = (current - timedelta(days=1)).replace(day=1)
+        for item in (current, previous):
+            if item not in starts:
+                starts.append(item)
+    return starts
+
+
+def _closed_month_end_before_next_open(generated_at: datetime, calendar: Any) -> date | None:
+    """Last session of a month after its close and strictly before the next open.
+
+    That window is when the month-end review is known and not yet traded.
+    It covers the close itself, the same-day evening, and the weekend or
+    holiday gap even after the UTC date has rolled into the next month.
+    """
+    import pandas as pd
+
+    now = pd.Timestamp(generated_at.astimezone(timezone.utc))
+    chosen: date | None = None
+    for month_start in _month_starts_around(generated_at):
+        session = _last_session_of_month(calendar, month_start)
+        if session is None:
+            continue
+        close_ts = pd.Timestamp(calendar.session_close(session))
+        if now < close_ts:
+            continue
+        next_open = pd.Timestamp(calendar.next_open(close_ts))
+        if now >= next_open:
+            continue
+        session_day = session.date()
+        if chosen is None or session_day > chosen:
+            chosen = session_day
+    return chosen
+
+
+def _selection_cutoff(
+    generated_at: datetime,
+    position_state: Mapping[str, Any],
+    *,
+    calendar: Any = None,
+) -> str:
+    """As-of date for an open book's monthly review.
+
+    Outside the post-close window this stays the previous UTC calendar-month
+    end, including when that day is not a session. A newer entry still wins
+    via max(signal_date, cutoff).
+    """
+    if generated_at.tzinfo is None:
+        raise ValueError("generated_at must be timezone-aware")
     generated_day = generated_at.astimezone(timezone.utc).date()
-    first_of_month = generated_day.replace(day=1)
-    previous_month_end = first_of_month - timedelta(days=1)
+    previous_month_end = generated_day.replace(day=1) - timedelta(days=1)
     signal_date = datetime.fromisoformat(str(position_state["signal_date"])).date()
-    return max(signal_date, previous_month_end).isoformat()
+    review = _closed_month_end_before_next_open(generated_at, _xnys_calendar(calendar))
+    cutoff = review if review is not None else previous_month_end
+    return max(signal_date, cutoff).isoformat()
 
 
 def _publish_pair(output_dir: Path, payloads: Mapping[str, Any]) -> None:
