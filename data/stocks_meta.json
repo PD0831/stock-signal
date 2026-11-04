@@ -1,18 +1,20 @@
 {
-  "updated_at": "2026-11-03 09:05 UTC",
+  "updated_at": "2026-11-04 08:42 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
-  "expected_symbols": 503,
-  "symbols": 503,
-  "missing_symbols": [],
+  "expected_symbols": 502,
+  "symbols": 501,
+  "missing_symbols": [
+    "TJX"
+  ],
   "rows": 249421,
   "date_min": "2024-11-04",
-  "date_max": "2026-11-02",
+  "date_max": "2026-11-03",
   "universe_source": "spdr_spy_holdings_xlsx",
-  "spy_holdings_as_of": "30-Oct-2026",
-  "spy_raw_holding_rows": 505,
+  "spy_holdings_as_of": "02-Nov-2026",
+  "spy_raw_holding_rows": 504,
   "spy_excluded_rows": [
     {
       "name": "US DOLLAR",
