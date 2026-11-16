@@ -1,15 +1,13 @@
 {
-  "updated_at": "2026-11-15 08:53 UTC",
+  "updated_at": "2026-11-16 09:05 UTC",
   "universe": "spy_holdings",
   "counting_method": "constituent_security_ticker",
   "share_class_policy": "GOOG and GOOGL counted separately",
   "price_basis": "regular_close_not_dividend_adjusted",
   "expected_symbols": 503,
-  "symbols": 502,
-  "missing_symbols": [
-    "CHD"
-  ],
-  "rows": 249962,
+  "symbols": 503,
+  "missing_symbols": [],
+  "rows": 250463,
   "date_min": "2024-11-14",
   "date_max": "2026-11-13",
   "universe_source": "spdr_spy_holdings_xlsx",
