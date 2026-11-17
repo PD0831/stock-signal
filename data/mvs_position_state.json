@@ -4,7 +4,7 @@
   "entry_signal": "Long",
   "signal_date": "2026-06-04",
   "execution_date": "2026-06-05",
-  "source_as_of": "2026-11-16",
+  "source_as_of": "2026-11-17",
   "source_status": "Offen",
   "source": "mvs-strategy",
   "position": "Long",
@@ -28,16 +28,18 @@
     "partial_take_profit_arms": "close_below_trend_ema",
     "long": {
       "ready": false,
-      "net_momentum": -6.37,
+      "net_momentum": -7.15,
       "trigger": 5.0,
       "blocked_by": [
         "already_long",
-        "net_momentum"
+        "strong_above_breakdown",
+        "net_momentum",
+        "vix_panic"
       ]
     },
     "dip_long": {
       "ready": false,
-      "breakdown": 35.0,
+      "breakdown": 42.15,
       "trigger": 76.0,
       "blocked_by": [
         "already_long",
@@ -46,12 +48,11 @@
     },
     "risk_off": {
       "ready": false,
-      "net_momentum": -6.37,
+      "net_momentum": -7.15,
       "trigger": -5.0,
-      "breakdown": 35.0,
-      "strong": 55.06,
+      "breakdown": 42.15,
+      "strong": 40.95,
       "blocked_by": [
-        "breakdown_above_strong",
         "breakdown_above_limit"
       ]
     },
@@ -68,17 +69,17 @@
     }
   },
   "market": {
-    "close": 27240.1,
-    "strong": 55.06,
-    "breakdown": 35.0,
-    "net_momentum": -6.37,
-    "ntss": -0.004778,
-    "vix_state": "yellow",
-    "trend_ema": 28491.8039
+    "close": 27230.7,
+    "strong": 40.95,
+    "breakdown": 42.15,
+    "net_momentum": -7.15,
+    "ntss": 0.019215,
+    "vix_state": "red",
+    "trend_ema": 28479.2556
   },
   "sizing_mode": "regular_long",
   "data_source": "tvdatafeed",
   "degraded": false,
   "degraded_reason": null,
-  "as_of": "2026-11-16"
+  "as_of": "2026-11-17"
 }
