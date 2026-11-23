@@ -2,44 +2,42 @@
   "schema_version": 1,
   "position_state": "flat",
   "entry_signal": null,
-  "signal_date": null,
+  "signal_date": "2026-11-22",
   "execution_date": null,
-  "source_as_of": "2026-11-20",
-  "source_status": "Flat",
+  "source_as_of": "2026-11-23",
+  "source_status": "Short",
   "source": "mvs-strategy",
-  "position": "flat",
-  "direction": "flat",
-  "entry_price": null,
-  "hard_stop": null,
-  "trailing_activation": null,
+  "position": "Gap Short A",
+  "direction": "short",
+  "entry_price": 25799.0,
+  "hard_stop": 27088.95,
+  "trailing_activation": 24122.065,
   "trailing_level": null,
   "trailing_active": false,
-  "effective_stop": null,
+  "effective_stop": 27088.95,
   "partial_tp": {
     "filled": false,
     "limit_active": false,
     "limit_price": null
   },
   "next_triggers": {
-    "hard_stop": null,
-    "trailing_activation": null,
+    "hard_stop": 27088.95,
+    "trailing_activation": 24122.065,
     "trailing_level": null,
     "partial_take_profit": null,
-    "partial_take_profit_arms": null,
+    "partial_take_profit_arms": "close_above_trend_ema",
     "long": {
       "ready": false,
-      "net_momentum": -6.36,
+      "net_momentum": 12.13,
       "trigger": 5.0,
       "blocked_by": [
         "strong_above_breakdown",
-        "breakdown_below_limit",
-        "net_momentum",
         "vix_panic"
       ]
     },
     "dip_long": {
       "ready": false,
-      "breakdown": 54.08,
+      "breakdown": 46.92,
       "trigger": 76.0,
       "blocked_by": [
         "breakdown"
@@ -47,36 +45,40 @@
     },
     "risk_off": {
       "ready": false,
-      "net_momentum": -6.36,
+      "net_momentum": 12.13,
       "trigger": -5.0,
-      "breakdown": 54.08,
-      "strong": 18.88,
-      "blocked_by": []
+      "breakdown": 46.92,
+      "strong": 31.01,
+      "blocked_by": [
+        "breakdown_above_limit",
+        "net_momentum"
+      ]
     },
     "gap_short": {
       "ready": false,
-      "in_window": true,
-      "days_below": 1,
+      "in_window": false,
+      "days_below": 0,
       "days_required": 2,
-      "threshold": 26358.7665,
-      "gap_class": "A",
+      "threshold": null,
+      "gap_class": null,
       "blocked_by": [
-        "days_below"
+        "not_in_gap",
+        "already_triggered"
       ]
     }
   },
   "market": {
-    "close": 25223.7,
-    "strong": 18.88,
-    "breakdown": 54.08,
-    "net_momentum": -6.36,
-    "ntss": 0.159987,
+    "close": 26780.3,
+    "strong": 31.01,
+    "breakdown": 46.92,
+    "net_momentum": 12.13,
+    "ntss": 0.043922,
     "vix_state": "red",
-    "trend_ema": 28413.6351
+    "trend_ema": 28371.6256
   },
   "sizing_mode": "cash",
   "data_source": "tvdatafeed",
   "degraded": false,
   "degraded_reason": null,
-  "as_of": "2026-11-20"
+  "as_of": "2026-11-23"
 }
