@@ -4,7 +4,7 @@
   "entry_signal": null,
   "signal_date": "2026-11-22",
   "execution_date": null,
-  "source_as_of": "2026-11-24",
+  "source_as_of": "2026-11-25",
   "source_status": "Short",
   "source": "mvs-strategy",
   "position": "Gap Short A",
@@ -28,16 +28,17 @@
     "partial_take_profit_arms": "close_above_trend_ema",
     "long": {
       "ready": false,
-      "net_momentum": 8.35,
+      "net_momentum": -1.78,
       "trigger": 5.0,
       "blocked_by": [
         "strong_above_breakdown",
+        "net_momentum",
         "vix_panic"
       ]
     },
     "dip_long": {
       "ready": false,
-      "breakdown": 44.94,
+      "breakdown": 46.72,
       "trigger": 76.0,
       "blocked_by": [
         "breakdown"
@@ -45,10 +46,10 @@
     },
     "risk_off": {
       "ready": false,
-      "net_momentum": 8.35,
+      "net_momentum": -1.78,
       "trigger": -5.0,
-      "breakdown": 44.94,
-      "strong": 39.36,
+      "breakdown": 46.72,
+      "strong": 38.17,
       "blocked_by": [
         "breakdown_above_limit",
         "net_momentum"
@@ -68,17 +69,17 @@
     }
   },
   "market": {
-    "close": 26264.7,
-    "strong": 39.36,
-    "breakdown": 44.94,
-    "net_momentum": 8.35,
-    "ntss": 0.034943,
+    "close": 26011.3,
+    "strong": 38.17,
+    "breakdown": 46.72,
+    "net_momentum": -1.78,
+    "ntss": 0.076075,
     "vix_state": "red",
-    "trend_ema": 28350.6612
+    "trend_ema": 28327.384
   },
   "sizing_mode": "cash",
   "data_source": "tvdatafeed",
   "degraded": false,
   "degraded_reason": null,
-  "as_of": "2026-11-24"
+  "as_of": "2026-11-25"
 }
