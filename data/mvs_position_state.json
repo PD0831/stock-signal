@@ -1,56 +1,56 @@
 {
   "schema_version": 1,
-  "position_state": "flat",
-  "entry_signal": null,
-  "signal_date": "2026-11-22",
-  "execution_date": null,
-  "source_as_of": "2026-11-25",
-  "source_status": "Short",
+  "position_state": "long",
+  "entry_signal": "Long",
+  "signal_date": "2026-11-27",
+  "execution_date": "2026-11-30",
+  "source_as_of": "2026-11-27",
+  "source_status": "Offen",
   "source": "mvs-strategy",
-  "position": "Gap Short A",
-  "direction": "short",
-  "entry_price": 25799.0,
-  "hard_stop": 27088.95,
-  "trailing_activation": 24122.065,
+  "position": "Long",
+  "direction": "long",
+  "entry_price": 26707.4,
+  "hard_stop": 22701.29,
+  "trailing_activation": 29111.066,
   "trailing_level": null,
   "trailing_active": false,
-  "effective_stop": 27088.95,
+  "effective_stop": 22701.29,
   "partial_tp": {
     "filled": false,
     "limit_active": false,
     "limit_price": null
   },
   "next_triggers": {
-    "hard_stop": 27088.95,
-    "trailing_activation": 24122.065,
+    "hard_stop": 22701.29,
+    "trailing_activation": 29111.066,
     "trailing_level": null,
     "partial_take_profit": null,
-    "partial_take_profit_arms": "close_above_trend_ema",
+    "partial_take_profit_arms": "close_below_trend_ema",
     "long": {
       "ready": false,
-      "net_momentum": -1.78,
+      "net_momentum": 16.5,
       "trigger": 5.0,
       "blocked_by": [
-        "strong_above_breakdown",
-        "net_momentum",
-        "vix_panic"
+        "already_long"
       ]
     },
     "dip_long": {
       "ready": false,
-      "breakdown": 46.72,
+      "breakdown": 36.59,
       "trigger": 76.0,
       "blocked_by": [
+        "already_long",
         "breakdown"
       ]
     },
     "risk_off": {
       "ready": false,
-      "net_momentum": -1.78,
+      "net_momentum": 16.5,
       "trigger": -5.0,
-      "breakdown": 46.72,
-      "strong": 38.17,
+      "breakdown": 36.59,
+      "strong": 54.67,
       "blocked_by": [
+        "breakdown_above_strong",
         "breakdown_above_limit",
         "net_momentum"
       ]
@@ -64,22 +64,23 @@
       "gap_class": null,
       "blocked_by": [
         "not_in_gap",
-        "already_triggered"
+        "already_triggered",
+        "long_signal"
       ]
     }
   },
   "market": {
-    "close": 26011.3,
-    "strong": 38.17,
-    "breakdown": 46.72,
-    "net_momentum": -1.78,
-    "ntss": 0.076075,
-    "vix_state": "red",
-    "trend_ema": 28327.384
+    "close": 26707.4,
+    "strong": 54.67,
+    "breakdown": 36.59,
+    "net_momentum": 16.5,
+    "ntss": -0.00042,
+    "vix_state": "yellow",
+    "trend_ema": 28290.3507
   },
-  "sizing_mode": "cash",
+  "sizing_mode": "regular_long",
   "data_source": "tvdatafeed",
   "degraded": false,
   "degraded_reason": null,
-  "as_of": "2026-11-25"
+  "as_of": "2026-11-27"
 }
